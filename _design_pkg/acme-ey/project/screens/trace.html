@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Acme Ops · Trace · TRC-00044</title>
+<link rel="stylesheet" href="_shared.css">
+<style>
+  .trace-app {
+    display: grid;
+    grid-template-rows: 40px auto 1fr;
+    height: 100vh;
+    overflow: hidden;
+  }
+  .trace-header {
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .crumb {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .crumb a { color: var(--text-muted); text-decoration: none; }
+  .crumb a:hover { color: var(--text-secondary); }
+  .crumb .sep { color: var(--text-dim); padding: 0 6px; }
+  .crumb .cur { color: var(--text-primary); }
+
+  .trace-workspace {
+    display: grid;
+    grid-template-columns: 300px 1fr 340px;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .trace-col {
+    overflow-y: auto;
+    padding: 20px 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .trace-col.left { border-right: 1px solid var(--border-subtle); }
+  .trace-col.right { border-left: 1px solid var(--border-subtle); }
+  .trace-graph-col {
+    overflow-y: auto;
+    padding: 24px 32px;
+  }
+
+  /* Left column · simpler */
+  .meta-block { }
+  .meta-block .label { display: block; margin-bottom: 8px; }
+  .meta-block .kv { grid-template-columns: 80px 1fr; row-gap: 6px; }
+  .meta-block .kv .k { font-size: 10px; }
+
+  /* Stats row · 2x2 grid */
+  .stats-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border-subtle);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+  .stats-2 .s {
+    padding: 10px 12px;
+    background: var(--bg-base);
+  }
+  .stats-2 .s .v {
+    font-family: var(--font-mono);
+    font-size: 16px;
+    font-weight: 300;
+    color: var(--text-primary);
+    line-height: 1.2;
+  }
+  .stats-2 .s.good .v { color: var(--color-active); }
+  .stats-2 .s .k {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  /* Right column · selected step detail (smaller) */
+  .step-detail {
+    background: var(--bg-surface);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius-md);
+  }
+  .step-detail .sh {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--accent-bg);
+  }
+  .step-detail .sh .lbl {
+    font-size: 9px;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: var(--accent-dim);
+  }
+  .step-detail .sh .name {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-primary);
+    margin-top: 2px;
+  }
+  .step-detail .sb { padding: 12px; }
+  .json {
+    background: var(--bg-base);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-x: auto;
+  }
+  .json .k { color: var(--accent-dim); }
+  .json .s { color: var(--color-active-dim); }
+  .json .n { color: var(--color-caution-dim); }
+  .json .b { color: var(--color-danger-dim); }
+  .json .c { color: var(--text-dim); font-style: italic; }
+
+  /* ─── Decision Graph ─── */
+  .tg {
+    position: relative;
+    width: 100%;
+    height: 1080px;
+    margin: 0 0 16px;
+  }
+  .tg-edges {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    pointer-events: none;
+  }
+  .tg-edges path, .tg-edges line {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: 1;
+  }
+  .tg-edges .arrow { fill: var(--border-strong); }
+  .tg-edges .accent { stroke: var(--accent-border); }
+  .tg-edges .success { stroke: var(--color-active-dim); }
+
+  .tg-node {
+    position: absolute;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-medium);
+    border-radius: var(--radius-md);
+    padding: 8px 10px;
+    display: grid;
+    grid-template-columns: 28px 1fr auto;
+    gap: 10px;
+    align-items: center;
+    z-index: 1;
+    cursor: pointer;
+    transition: border-color 120ms, background 120ms;
+  }
+  .tg-node:hover { border-color: var(--border-strong); }
+  .tg-node .nm-main {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-high);
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tg-node .nm-sub {
+    font-size: 10px;
+    color: var(--text-muted);
+    line-height: 1.4;
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tg-node .nm-meta {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-muted);
+    text-align: right;
+  }
+  .tg-node .nm-meta b {
+    display: block;
+    color: var(--text-high);
+    font-weight: 500;
+    font-size: 10px;
+  }
+  .tg-node.t-policy   { border-color: var(--border-medium); }
+  .tg-node.t-auth     { border-color: var(--border-medium); }
+  .tg-node.t-llm      { border-color: rgba(96,165,250,0.30); background: rgba(96,165,250,0.025); }
+  .tg-node.t-tool     { border-color: var(--border-strong); background: rgba(255,255,255,0.025); }
+  .tg-node.t-skill    { border-color: var(--accent-border); background: rgba(217,119,87,0.04); }
+  .tg-node.t-action   { border-color: var(--accent-border); background: rgba(217,119,87,0.06); }
+  .tg-node.t-outcome  { border-color: var(--color-active-dim); background: rgba(52,211,153,0.04); }
+  .tg-node.t-write    { border-color: var(--color-active-dim); background: rgba(52,211,153,0.06); }
+  .tg-node.selected {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 1px var(--accent), 0 0 20px var(--accent-glow);
+  }
+  .tg-node .num {
+    position: absolute;
+    top: -7px; left: -7px;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--bg-base);
+    border: 1px solid var(--border-medium);
+    display: grid;
+    place-items: center;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-muted);
+    line-height: 1;
+  }
+  .tg-node.selected .num {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .graph-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .graph-title .t {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+  .graph-title .s {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+</style>
+</head>
+<body>
+<div class="trace-app">
+
+  <!-- Top chrome -->
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">ACME · OPS</span></div>
+    <nav class="nav">
+      <a href="#">Chat</a>
+      <a href="#">Conversations</a>
+      <a class="active" href="#">Traces</a>
+      <a href="#">Eval</a>
+    </nav>
+    <div class="spacer"></div>
+    <span class="mono" style="font-size:11px; color: var(--text-secondary);">admin.acme</span>
+    <span class="badge" style="font-size:9px; background: var(--color-caution-bg); color: var(--color-caution-dim);">admin</span>
+  </header>
+
+  <!-- Trace header -->
+  <div class="trace-header">
+    <div class="crumb">
+      <a href="#">traces</a><span class="sep">›</span><span class="cur">TRC-00044</span>
+    </div>
+    <span class="badge badge-created">✓ action created · NA-1007</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="mono dim" style="font-size:10px;">2026-05-27 · 14:21 BST · sam.support</span>
+    <button class="btn btn-sm btn-ghost">⤓ JSON</button>
+  </div>
+
+  <!-- Body -->
+  <main class="trace-workspace">
+
+    <!-- Left: trace context -->
+    <aside class="trace-col left">
+
+      <div class="meta-block">
+        <span class="label">User query</span>
+        <p style="font-family: var(--font-mono); font-size: 12px; color: var(--text-high); line-height: 1.55;">
+          "Create that recovery plan action — high priority, due tomorrow 9am Europe/London. Assign to me."
+        </p>
+        <div style="margin-top: 8px; font-family: var(--font-mono); font-size: 10px; color: var(--text-dim);">
+          PII · 0 redactions · <a href="#" style="color: var(--accent-dim); text-decoration: none;">reveal original ›</a>
+        </div>
+      </div>
+
+      <div class="meta-block">
+        <span class="label">Run</span>
+        <div class="kv">
+          <span class="k">User</span>     <span class="v">sam.support · support_user</span>
+          <span class="k">Intent</span>   <span class="v">create_action</span>
+          <span class="k">Provider</span> <span class="v">anthropic · haiku-4-5</span>
+          <span class="k">Conv</span>     <span class="v">CONV-7833</span>
+          <span class="k">OTel</span>     <span class="v dim">a7f3…9e21</span>
+        </div>
+      </div>
+
+      <div class="meta-block">
+        <span class="label">Result</span>
+        <div class="stats-2">
+          <div class="s good"><div class="v">$0.0061</div><div class="k">cost</div></div>
+          <div class="s"><div class="v">1,820</div><div class="k">tokens</div></div>
+          <div class="s"><div class="v">1.91s</div><div class="k">latency</div></div>
+          <div class="s"><div class="v">NA-1007</div><div class="k">action ref</div></div>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- Centre: decision graph -->
+    <section class="trace-graph-col">
+
+      <div class="graph-title">
+        <div>
+          <div class="t">Evidence-to-Action Decision Graph</div>
+          <div class="s">17 events · 4 tools · 1 skill · 2 rbac checks · 1 write</div>
+        </div>
+      </div>
+
+      <div class="tg">
+
+        <svg class="tg-edges" viewBox="0 0 720 1080" preserveAspectRatio="none">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0,0 L5,9 L10,0" class="arrow" fill="currentColor" stroke="none" />
+            </marker>
+          </defs>
+
+          <path d="M360 68 V 76" marker-end="url(#arr)"/>
+          <path d="M360 136 V 144" marker-end="url(#arr)"/>
+          <path d="M360 204 V 212" marker-end="url(#arr)"/>
+          <path d="M360 272 V 280" marker-end="url(#arr)"/>
+
+          <path d="M360 340 V 354"/>
+          <line x1="110" y1="354" x2="610" y2="354"/>
+          <path d="M110 354 V 372" marker-end="url(#arr)"/>
+          <path d="M360 354 V 372" marker-end="url(#arr)"/>
+          <path d="M610 354 V 372" marker-end="url(#arr)"/>
+
+          <path d="M110 432 V 446"/>
+          <path d="M360 432 V 446"/>
+          <path d="M610 432 V 446"/>
+          <line x1="110" y1="446" x2="610" y2="446"/>
+          <path d="M360 446 V 460" marker-end="url(#arr)"/>
+
+          <path d="M360 520 V 528" marker-end="url(#arr)" class="accent"/>
+          <path d="M360 588 V 596" marker-end="url(#arr)" class="accent"/>
+          <path d="M360 656 V 664" marker-end="url(#arr)"/>
+          <path d="M360 724 V 732" marker-end="url(#arr)"/>
+          <path d="M360 792 V 800" marker-end="url(#arr)" class="accent"/>
+          <path d="M360 860 V 868" marker-end="url(#arr)" class="success"/>
+          <path d="M360 928 V 936" marker-end="url(#arr)"/>
+          <path d="M360 996 V 1004" marker-end="url(#arr)" class="success"/>
+        </svg>
+
+        <!-- 1 -->
+        <div class="tg-node t-policy" style="left:200px; top:8px; width:320px;">
+          <span class="num">1</span>
+          <span class="iconchip neutral">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">user_query</div>
+            <div class="nm-sub">96 chars · 4,096 limit</div>
+          </div>
+          <div class="nm-meta"><b>in</b></div>
+        </div>
+
+        <!-- 2 -->
+        <div class="tg-node t-policy" style="left:200px; top:76px; width:320px;">
+          <span class="num">2</span>
+          <span class="iconchip success">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">adversarial.check</div>
+            <div class="nm-sub">no patterns matched</div>
+          </div>
+          <div class="nm-meta"><b>4 ms</b><span style="color: var(--color-active-dim);">pass</span></div>
+        </div>
+
+        <!-- 3 -->
+        <div class="tg-node t-policy" style="left:200px; top:144px; width:320px;">
+          <span class="num">3</span>
+          <span class="iconchip neutral">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">pii.redact</div>
+            <div class="nm-sub">0 matches</div>
+          </div>
+          <div class="nm-meta"><b>2 ms</b></div>
+        </div>
+
+        <!-- 4 -->
+        <div class="tg-node t-auth" style="left:200px; top:212px; width:320px;">
+          <span class="num">4</span>
+          <span class="iconchip neutral">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">auth.validate_token</div>
+            <div class="nm-sub">keycloak · sam.support · support_user</div>
+          </div>
+          <div class="nm-meta"><b>22 ms</b><span style="color: var(--color-active-dim);">valid</span></div>
+        </div>
+
+        <!-- 5 SELECTED -->
+        <div class="tg-node t-llm selected" style="left:200px; top:280px; width:320px;">
+          <span class="num">5</span>
+          <span class="iconchip" style="background: var(--accent-bg); border-color: var(--accent); color: var(--accent);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">agent.plan</div>
+            <div class="nm-sub">4 steps · intent: create_action</div>
+          </div>
+          <div class="nm-meta"><b>480 ms</b><span>612 tok</span></div>
+        </div>
+
+        <!-- 6, 7, 8 fan-out -->
+        <div class="tg-node t-tool" style="left:0; top:372px; width:220px;">
+          <span class="num">6</span>
+          <span class="iconchip neutral">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3z"/><path d="M8 8v8M12 8v8M16 8v8"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">get_customer_profile</div>
+            <div class="nm-sub">Northwind · CUST-001</div>
+          </div>
+          <div class="nm-meta"><b>84 ms</b></div>
+        </div>
+
+        <div class="tg-node t-tool" style="left:250px; top:372px; width:220px;">
+          <span class="num">7</span>
+          <span class="iconchip neutral">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3z"/><path d="M8 8v8M12 8v8M16 8v8"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">summarise_issue_history</div>
+            <div class="nm-sub">ISS-102 · 5 updates</div>
+          </div>
+          <div class="nm-meta"><b>218 ms</b></div>
+        </div>
+
+        <div class="tg-node t-tool" style="left:500px; top:372px; width:220px;">
+          <span class="num">8</span>
+          <span class="iconchip neutral">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3z"/><path d="M8 8v8M12 8v8M16 8v8"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">recommend_next_action</div>
+            <div class="nm-sub">advisory · no write</div>
+          </div>
+          <div class="nm-meta"><b>96 ms</b></div>
+        </div>
+
+        <!-- 9 skill -->
+        <div class="tg-node t-skill" style="left:200px; top:460px; width:320px;">
+          <span class="num">9</span>
+          <span class="iconchip accent">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">skill.customer_escalation_summary</div>
+            <div class="nm-sub">risk: High · 4 evidence</div>
+          </div>
+          <div class="nm-meta"><b>140 ms</b></div>
+        </div>
+
+        <!-- 10 recommended -->
+        <div class="tg-node t-action" style="left:200px; top:528px; width:320px;">
+          <span class="num">10</span>
+          <span class="iconchip accent">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">PREPARE_RECOVERY_PLAN</div>
+            <div class="nm-sub">recommended · High · due 09:00 BST</div>
+          </div>
+          <div class="nm-meta"><b style="color: var(--accent-dim);">action</b></div>
+        </div>
+
+        <!-- 11 catalogue -->
+        <div class="tg-node t-policy" style="left:200px; top:596px; width:320px;">
+          <span class="num">11</span>
+          <span class="iconchip success">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17h6"/><path d="m9 3 2 3 5-5"/><path d="M3 12h7"/><path d="M3 7h7"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">policy.action_catalogue</div>
+            <div class="nm-sub">∈ catalogue · required fields complete</div>
+          </div>
+          <div class="nm-meta"><b>11 ms</b></div>
+        </div>
+
+        <!-- 12 rbac -->
+        <div class="tg-node t-policy" style="left:200px; top:664px; width:320px;">
+          <span class="num">12</span>
+          <span class="iconchip success">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">policy.rbac_check · propose</div>
+            <div class="nm-sub">support_user ∈ allowed_roles</div>
+          </div>
+          <div class="nm-meta"><b>30 ms</b><span style="color: var(--color-active-dim);">allow</span></div>
+        </div>
+
+        <!-- 13 propose -->
+        <div class="tg-node t-action" style="left:200px; top:732px; width:320px;">
+          <span class="num">13</span>
+          <span class="iconchip accent">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="M9 15h6"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">action.propose</div>
+            <div class="nm-sub">redis · token issued · ttl 10:00 · idempotency locked</div>
+          </div>
+          <div class="nm-meta"><b style="color: var(--accent-dim);">staged</b><span>38 ms</span></div>
+        </div>
+
+        <!-- 14 confirm -->
+        <div class="tg-node t-action" style="left:200px; top:800px; width:320px;">
+          <span class="num">14</span>
+          <span class="iconchip accent">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">action.confirm · user click</div>
+            <div class="nm-sub">token verified · single-use</div>
+          </div>
+          <div class="nm-meta"><b style="color: var(--accent-dim);">verified</b><span>19 ms</span></div>
+        </div>
+
+        <!-- 15 write -->
+        <div class="tg-node t-write" style="left:200px; top:868px; width:320px;">
+          <span class="num">15</span>
+          <span class="iconchip success">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">create_next_action</div>
+            <div class="nm-sub">postgres write · NA-1007 · linked to ISS-102</div>
+          </div>
+          <div class="nm-meta"><b style="color: var(--color-active-dim);">created</b><span>71 ms</span></div>
+        </div>
+
+        <!-- 16 compose -->
+        <div class="tg-node t-llm" style="left:200px; top:936px; width:320px;">
+          <span class="num">16</span>
+          <span class="iconchip info">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">llm.compose_answer</div>
+            <div class="nm-sub">6 claims · 6 evidence links · grounded</div>
+          </div>
+          <div class="nm-meta"><b>855 ms</b><span>1,208 tok</span></div>
+        </div>
+
+        <!-- 17 final -->
+        <div class="tg-node t-outcome" style="left:200px; top:1004px; width:320px;">
+          <span class="num">17</span>
+          <span class="iconchip success">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          </span>
+          <div>
+            <div class="nm-main">final_response · action_created</div>
+            <div class="nm-sub">streamed to sam.support</div>
+          </div>
+          <div class="nm-meta"><b style="color: var(--color-active-dim);">1.91 s</b><span>$0.0061</span></div>
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- Right: selected step detail -->
+    <aside class="trace-col right">
+
+      <div class="step-detail">
+        <div class="sh">
+          <span class="lbl">Step 5 · selected</span>
+          <div class="name">agent.plan</div>
+        </div>
+        <div class="sb">
+          <div class="kv">
+            <span class="k">Model</span>   <span class="v">claude-haiku-4-5</span>
+            <span class="k">Tokens</span>  <span class="v">612 in</span>
+            <span class="k">Latency</span> <span class="v">480 ms</span>
+            <span class="k">Cost</span>    <span class="v">$0.0019</span>
+          </div>
+        </div>
+        <div style="padding: 0 12px 12px;">
+          <div class="label" style="margin-bottom:6px;">Plan output</div>
+<div class="json"><span class="c">// plan_v1 schema</span>
+{
+  <span class="k">"intent"</span>: <span class="s">"create_action"</span>,
+  <span class="k">"write_requested"</span>: <span class="b">true</span>,
+  <span class="k">"steps"</span>: [
+    { <span class="k">"tool"</span>: <span class="s">"get_customer_profile"</span>,
+      <span class="k">"args"</span>: { <span class="k">"customer_name"</span>: <span class="s">"Northwind"</span> } },
+    { <span class="k">"tool"</span>: <span class="s">"summarise_issue_history"</span>,
+      <span class="k">"args"</span>: { <span class="k">"issue_ref"</span>: <span class="s">"ISS-102"</span> } },
+    { <span class="k">"tool"</span>: <span class="s">"recommend_next_action"</span>,
+      <span class="k">"args"</span>: { <span class="k">"issue_ref"</span>: <span class="s">"ISS-102"</span> } },
+    { <span class="k">"action"</span>: <span class="s">"propose_create_next_action"</span> }
+  ]
+}</div>
+        </div>
+      </div>
+
+      <p style="font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); padding: 0 4px;">
+        Click any other node in the graph to swap detail.
+      </p>
+
+    </aside>
+
+  </main>
+
+</div>
+</body>
+</html>

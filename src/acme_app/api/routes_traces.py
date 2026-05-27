@@ -1,15 +1,11 @@
-"""Trace viewer routes.
-
-JSON endpoints power the UI table and the trace_detail page. The trace_detail
-view renders the Evidence-to-Action Decision Graph from trace_events sorted by
-created_at.
-"""
+"""Trace viewer routes."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from acme_app.api._view_helpers import badge_class_for, enrich_trace_row, relative_when
 from acme_app.auth.current_user import CurrentUser, get_current_user
 from acme_app.infrastructure.db import repositories as repo
 from acme_app.infrastructure.db.session import get_db_session
@@ -24,7 +20,7 @@ async def traces_page(
     user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> HTMLResponse:
-    traces = await repo.list_traces(session, limit=100)
+    traces = [enrich_trace_row(r) for r in await repo.list_traces(session, limit=100)]
     return request.app.state.templates.TemplateResponse(
         request, 'traces.html', {'user': user, 'traces': traces},
     )
@@ -49,6 +45,8 @@ async def trace_detail(
     trace = await repo.get_trace(session, trace_ref)
     if trace is None:
         raise HTTPException(status_code=404, detail='Trace not found')
+    trace['badge_class'] = badge_class_for(trace.get('final_status'))
+    trace['when'] = relative_when(trace.get('created_at'))
     is_admin = 'admin' in user.roles
     return request.app.state.templates.TemplateResponse(
         request, 'trace_detail.html',

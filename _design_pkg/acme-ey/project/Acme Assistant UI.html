@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Acme Ops Assistant · UI Designs</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  body { margin: 0; background: #0a0a0a; font-family: 'Inter', system-ui, sans-serif; color: #fff; }
+  .screen-frame {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    display: block;
+    background: #0a0a0a;
+  }
+  /* Intro / rationale cards */
+  .doc {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 12px;
+    padding: 32px 36px;
+    color: rgba(255,255,255,0.85);
+    line-height: 1.65;
+  }
+  .doc h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: 0.10em;
+    margin: 0 0 6px;
+    color: #fff;
+  }
+  .doc h1 span { color: #d97757; }
+  .doc h2 {
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #71717a;
+    margin: 22px 0 8px;
+  }
+  .doc h2:first-of-type { margin-top: 18px; }
+  .doc .sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #52525b;
+    margin-bottom: 18px;
+  }
+  .doc p { font-size: 13px; margin: 8px 0 12px; }
+  .doc ul { font-size: 13px; line-height: 1.7; margin: 4px 0 10px 18px; padding: 0; }
+  .doc li { margin-bottom: 4px; }
+  .doc strong { color: #fff; font-weight: 500; }
+  .doc code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #d4d4d8;
+    background: rgba(255,255,255,0.04);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+  .doc a { color: #d97757; }
+  .doc .map {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    margin: 6px 0 4px;
+  }
+  .doc .map .k { color: #71717a; }
+  .doc .map .v { color: rgba(255,255,255,0.85); }
+  .doc .swatches {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .doc .sw {
+    display: grid;
+    grid-template-columns: 24px 1fr auto;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+  }
+  .doc .sw .chip {
+    width: 22px; height: 22px;
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.10);
+  }
+  .doc .sw .name { color: rgba(255,255,255,0.85); }
+  .doc .sw .hex { color: #71717a; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+
+<script type="text/babel">
+const { useState } = React;
+
+function Screen({ src }) {
+  return <iframe className="screen-frame" src={src} />;
+}
+
+function Intro() {
+  return (
+    <div className="doc">
+      <h1>ACME<span>·</span>OPS · ASSISTANT UI</h1>
+      <div className="sub">Mockups · plug-and-play · jinja2 + light JS</div>
+
+      <p>
+        UI for the <strong>Acme Operations Assistant</strong> — an agentic enterprise assistant with
+        Keycloak, PostgreSQL, Redis, a custom MCP server, reusable Skills, propose-confirm writes,
+        and a decision-trace viewer.
+      </p>
+
+      <p>
+        Designed against the <strong>UI Design Brief</strong> — restrained enterprise realism, single
+        warm accent, dense information, decision graph as a first-class artifact. Closer in feel to
+        Linear / Datadog / Stripe Dashboard than to a consumer AI chat.
+      </p>
+
+      <h2>Screen ↔ route map</h2>
+      <div className="map">
+        <span className="k">login.html</span>           <span className="v">GET /login</span>
+        <span className="k">chat-streaming.html</span>  <span className="v">{"GET /chat/{id} · during SSE"}</span>
+        <span className="k">chat-propose.html</span>    <span className="v">{"GET /chat/{id} · pending_action"}</span>
+        <span className="k">chat-denied.html</span>     <span className="v">{"GET /chat/{id} · rbac deny"}</span>
+        <span className="k">chat-adversarial.html</span><span className="v">{"GET /chat/{id} · adv block"}</span>
+        <span className="k">conversations.html</span>   <span className="v">GET /conversations</span>
+        <span className="k">traces.html</span>          <span className="v">GET /traces</span>
+        <span className="k">trace.html</span>           <span className="v">{"GET /traces/{trace_ref}"}</span>
+        <span className="k">eval.html</span>            <span className="v">GET /eval</span>
+      </div>
+
+      <h2>Shared</h2>
+      <p style={{ marginTop: 4 }}>
+        <code>screens/_shared.css</code> — 80+ CSS custom properties (palette, type, radii, spacing),
+        all badges, panels, plan-card, action-card, decision-graph nodes, tables. Inter + JetBrains
+        Mono via Google Fonts. No build step. No JS framework needed at runtime.
+      </p>
+
+      <h2>Next steps for handoff</h2>
+      <ul>
+        <li>Lift HTML into <code>src/acme_app/templates/</code> as Jinja2 templates — swap static strings for {"{{ vars }}"} and {"{% for %}"} loops.</li>
+        <li>Wire SSE to the streaming plan-card — each <code>plan-step</code> row maps 1:1 to an SSE event type (<code>tool_start</code>, <code>tool_complete</code>, <code>skill_start</code>, …).</li>
+        <li>The proposed-action card already models the <code>confirmation_token</code> + TTL + idempotency-hash contract.</li>
+        <li>Trace graph rows correspond 1:1 to <code>trace_events.event_type</code> values; the event log below mirrors the table schema.</li>
+        <li>HTMX is a natural fit for the conversation list, trace list, and Confirm/Cancel buttons.</li>
+      </ul>
+    </div>
+  );
+}
+
+function Rationale() {
+  return (
+    <div className="doc">
+      <h1>RATIONALE</h1>
+      <div className="sub">Why these choices · for the panel</div>
+
+      <h2>Palette</h2>
+      <p>
+        Single warm accent — <code>#d97757</code> terracotta — for primary actions, brand mark,
+        and selected state. Avoids blue per the brief (overused in AI products) and avoids violet
+        gradients (the AI-assistant trope). Semantic palette (success / caution / danger) is reserved
+        for status only — never decoration.
+      </p>
+      <div className="swatches">
+        <div className="sw"><div className="chip" style={{ background: '#d97757' }}></div><span className="name">accent · terracotta</span><span className="hex">#d97757</span></div>
+        <div className="sw"><div className="chip" style={{ background: '#34d399' }}></div><span className="name">success</span><span className="hex">#34d399</span></div>
+        <div className="sw"><div className="chip" style={{ background: '#fbbf24' }}></div><span className="name">caution</span><span className="hex">#fbbf24</span></div>
+        <div className="sw"><div className="chip" style={{ background: '#fb7185' }}></div><span className="name">danger</span><span className="hex">#fb7185</span></div>
+        <div className="sw"><div className="chip" style={{ background: '#60a5fa' }}></div><span className="name">info · loading only</span><span className="hex">#60a5fa</span></div>
+        <div className="sw"><div className="chip" style={{ background: '#0a0a0a', border: '1px solid #333' }}></div><span className="name">bg · near-black</span><span className="hex">#0a0a0a</span></div>
+      </div>
+
+      <h2>Typography</h2>
+      <p>
+        <strong>Inter</strong> for UI (400 body, 500 emphasis, 600 reserved for stat headlines).
+        <strong> JetBrains Mono</strong> for every numeric or identifier — trace IDs, dollar amounts,
+        token counts, latencies. Tabular numerals on anything that updates live. 10–11px UI labels with
+        wide letter-spacing for sectioning.
+      </p>
+
+      <h2>The decision graph (the signature)</h2>
+      <p>
+        SVG edges underneath HTML nodes — not a bullet list. Vertical pipeline with one fan-out for
+        parallel MCP tools, because that's what the agent's plan actually expresses. Each node carries:
+        an icon-chip indicating event type, a primary label (the event name as it appears in
+        <code> trace_events</code>), a sub label (what happened), and a meta block (latency + outcome).
+        Outline colour encodes type — neutral for auth/policy, info-tinted for LLM, accent for
+        skill/action, success for write/outcome.
+      </p>
+      <p>
+        The "selected" state (terracotta border + glow) ties the node to the right-hand detail panel
+        showing the agent's raw plan JSON. Clicking any other node swaps the detail. This is the
+        Datadog APM pattern: graph for orientation, detail panel for inspection.
+      </p>
+
+      <h2>Role-aware UI</h2>
+      <p>
+        Per the brief, RBAC is visible, not just enforced. The role badge in the user pill is subtly
+        colour-coded: <span style={{ color: '#60a5fa' }}>sales (info-blue)</span>,
+        <span style={{ color: '#d97757' }}> support (accent)</span>,
+        <span style={{ color: '#fbbf24' }}> admin (caution)</span>. Sales sees no Confirm buttons
+        anywhere — only a "Forward to support" affordance on recommendations. Support sees Confirm for
+        their permission set. Admin gets the "reveal original query" toggle on PII-redacted trace
+        pages. The Permission Denied screen shows what *would have* been proposed, not just a refusal.
+      </p>
+
+      <h2>What's deliberately not here</h2>
+      <ul>
+        <li>No gradients as decoration, no AI sparkle iconography, no centered hero on the chat screen.</li>
+        <li>No emoji in body copy. Decision badges use simple symbols (✓ ⨯ ⏵ ?) — never emoji.</li>
+        <li>No avatar circles taking disproportionate space — 20px, monospace initials, no decoration.</li>
+        <li>No "Powered by" or "AI" badges.</li>
+        <li>No light mode. Dark only — the operator-grade context calls for it; the brief permits it.</li>
+      </ul>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <DesignCanvas
+      title="Acme Operations Assistant"
+      subtitle="UI designs · 9 screens · jinja2 + light JS · plug-and-play HTML"
+    >
+      <DCSection id="intro" title="Brief & rationale" subtitle="What this is, why these choices, how it plugs in">
+        <DCArtboard id="readme" label="README" width={780} height={760} style={{ background: '#0a0a0a', padding: 36, display: 'grid', placeItems: 'start center' }}>
+          <Intro />
+        </DCArtboard>
+        <DCArtboard id="rationale" label="Design rationale" width={780} height={1000} style={{ background: '#0a0a0a', padding: 36, display: 'grid', placeItems: 'start center' }}>
+          <Rationale />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="login" title="Login" subtitle="GET /login · Keycloak direct-grant · role quick-select for the three seeded users">
+        <DCArtboard id="login" label="Login" width={1200} height={760}>
+          <Screen src="screens/login.html" />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="chat" title="Chat — primary work surface" subtitle="GET /chat/{id} · four states across the propose-confirm + safety surface">
+        <DCArtboard id="chat-streaming" label="Streaming · sales briefing" width={1440} height={900}>
+          <Screen src="screens/chat-streaming.html" />
+        </DCArtboard>
+        <DCArtboard id="chat-propose" label="Propose-confirm · support" width={1440} height={900}>
+          <Screen src="screens/chat-propose.html" />
+        </DCArtboard>
+        <DCArtboard id="chat-denied" label="Permission denied · sales" width={1440} height={900}>
+          <Screen src="screens/chat-denied.html" />
+        </DCArtboard>
+        <DCArtboard id="chat-adversarial" label="Adversarial blocked" width={1440} height={900}>
+          <Screen src="screens/chat-adversarial.html" />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="conv" title="Conversations" subtitle="GET /conversations · full archive · search + filter · grouped by recency">
+        <DCArtboard id="conversations" label="Conversations · sam.support" width={1440} height={900}>
+          <Screen src="screens/conversations.html" />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="traces" title="Traces — forensics surface" subtitle="The signature feature. List view for browsing; detail view for the Evidence-to-Action Decision Graph.">
+        <DCArtboard id="traces-list" label="Traces · list · admin" width={1440} height={900}>
+          <Screen src="screens/traces.html" />
+        </DCArtboard>
+        <DCArtboard id="trace" label="Trace · TRC-00044 · SVG decision graph" width={1440} height={1100}>
+          <Screen src="screens/trace.html" />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="eval" title="Evaluation suite" subtitle="GET /eval · 13 cases × 3 runs · methodology + variance reporting">
+        <DCArtboard id="eval" label="Eval · run 027" width={1440} height={950}>
+          <Screen src="screens/eval.html" />
+        </DCArtboard>
+      </DCSection>
+
+    </DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+
+</body>
+</html>

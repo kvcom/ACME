@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Acme Ops · Chat · Northwind briefing</title>
+<link rel="stylesheet" href="_shared.css">
+<style>
+  /* tighten the workspace grid for this view */
+  .workspace { grid-template-columns: 240px 1fr 300px; }
+  .composer { padding-top: 12px; }
+</style>
+</head>
+<body>
+<div class="app-slim">
+
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">ACME · OPS</span></div>
+    <nav class="nav">
+      <a class="active" href="#">Chat</a>
+      <a href="#">Conversations</a>
+      <a href="#">Traces</a>
+      <a href="#">Eval</a>
+    </nav>
+    <div class="spacer"></div>
+    <span class="mono" style="font-size:11px; color: var(--text-secondary);">sarah.sales</span>
+    <span class="badge badge-neutral" style="font-size:9px;">sales_user</span>
+  </header>
+
+  <main class="workspace">
+
+    <!-- Sidebar -->
+    <aside class="sidebar sidebar-flex">
+      <button class="btn btn-sm" style="width:100%; justify-content:center; margin-bottom:14px;">＋ New conversation</button>
+
+      <div class="conv-scroll">
+        <div class="label" style="margin: 4px 4px 8px;">Today</div>
+        <div class="conv-item active">
+          <div class="title">Northwind briefing</div>
+          <div class="meta">streaming…</div>
+        </div>
+        <div class="conv-item">
+          <div class="title">ISS-209 contact dedupe</div>
+          <div class="meta">12m</div>
+        </div>
+
+        <div class="label" style="margin: 14px 4px 8px;">Yesterday</div>
+        <div class="conv-item">
+          <div class="title">Acme · disambiguation</div>
+          <div class="meta">clarified</div>
+        </div>
+        <div class="conv-item">
+          <div class="title">Contoso onboarding status</div>
+          <div class="meta">14h</div>
+        </div>
+        <div class="conv-item">
+          <div class="title">Skyline P2 review</div>
+          <div class="meta">18h</div>
+        </div>
+      </div>
+
+      <div class="sidebar-foot">
+        <div class="provider-row">
+          <span>LLM</span>
+          <span><b>Anthropic</b> · haiku-4-5 <span class="dimmer">▾</span></span>
+        </div>
+        <div class="signout">
+          <span>Sign out</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Thread -->
+    <section class="thread" style="padding: 32px 48px 80px;">
+
+      <div class="msg msg-user">
+        <div class="msg-body-user">
+          I have a call with Northwind in 20 minutes. What are the open issues, latest status and recommended next step?
+        </div>
+      </div>
+
+      <!-- Streaming plan — quieter -->
+      <div class="msg msg-bot">
+        <div class="plan-quiet">
+          <div class="ph">
+            <span><b>Planning</b> · 5 steps</span>
+            <span>1.8s elapsed</span>
+          </div>
+          <div class="ps">
+            <div class="pl"><span class="pi">✓</span><span>Read customer profile <small>· Northwind Energy</small></span></div>
+            <div class="pl"><span class="pi">✓</span><span>Open issues <small>· 2 found</small></span></div>
+            <div class="pl run"><span class="pi">◐</span><span>Summarising issue history <small>· ISS-102</small></span></div>
+            <div class="pl queued"><span class="pi">○</span><span>Customer escalation summary</span></div>
+            <div class="pl queued"><span class="pi">○</span><span>Compose answer</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Composer -->
+      <div class="composer">
+        <div class="composer-inner">
+          <input type="text" placeholder="Ask about a customer, issue, or next action…" disabled>
+          <button class="btn btn-sm" disabled>Send</button>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Right rail · only Evidence while streaming -->
+    <aside class="rail">
+      <div class="panel">
+        <div class="panel-header">
+          <span class="label">Evidence</span>
+          <span class="mono dim" style="font-size:10px;">3 records · live</span>
+        </div>
+        <div class="panel-body" style="padding: 6px;">
+          <div class="ev-item">
+            <span class="ref">CUST-001</span>
+            <span class="desc">Northwind Energy · Enterprise · UK</span>
+          </div>
+          <div class="ev-item">
+            <span class="ref">ISS-102</span>
+            <span class="desc">API integration delay · P1 · <span style="color: var(--color-danger-dim);">SLA breached</span></span>
+          </div>
+          <div class="ev-item">
+            <span class="ref">ISS-107</span>
+            <span class="desc">Billing reference · P3 · waiting for customer</span>
+          </div>
+          <div class="ev-item" style="opacity: 0.55;">
+            <span class="ref">UPD-…</span>
+            <span class="desc">retrieving updates for ISS-102…</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+  </main>
+
+</div>
+</body>
+</html>

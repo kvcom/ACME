@@ -2,27 +2,104 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>Acme Operations · Conversations</title>
+  <title>Acme Ops · Conversations</title>
   <link rel="stylesheet" href="/static/app.css"/>
+  <style>
+    .page { display: grid; grid-template-rows: 40px auto 1fr; height: 100vh; overflow: hidden; }
+    .page-header { padding: 22px 32px 14px; border-bottom: 1px solid var(--border-subtle);
+                   display: flex; align-items: center; gap: 16px; }
+    .page-title { font-size: 16px; color: var(--text-primary); font-weight: 500; flex: 1; }
+    .search {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--bg-surface); border: 1px solid var(--border-medium);
+      border-radius: var(--radius-md); padding: 6px 10px; width: 280px;
+    }
+    .search input { flex: 1; background: transparent; border: 0; outline: 0;
+      color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; }
+    .search input::placeholder { color: var(--text-dim); }
+    .search svg { width: 12px; height: 12px; color: var(--text-muted); }
+    .page-body { overflow-y: auto; padding: 18px 32px 32px; }
+    .grp { margin-bottom: 22px; }
+    .grp .head {
+      font-family: var(--font-ui); font-size: 10px; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--text-muted); padding: 4px 4px 10px;
+    }
+    .conv-row {
+      display: grid; grid-template-columns: 1fr 120px 70px; gap: 16px;
+      align-items: center; padding: 14px 16px;
+      border-bottom: 1px solid var(--border-subtle); cursor: pointer;
+      transition: background 100ms; text-decoration: none;
+    }
+    .grp .conv-row:first-of-type { border-top: 1px solid var(--border-subtle); }
+    .conv-row:hover { background: var(--bg-surface-raised); }
+    .conv-row .col-title { overflow: hidden; }
+    .conv-row .title {
+      color: var(--text-high); font-size: 13px; margin-bottom: 3px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .conv-row .title .pending-dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0;
+    }
+    .conv-row .preview {
+      color: var(--text-muted); font-size: 11px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      font-family: var(--font-mono);
+    }
+    .conv-row .state { text-align: right; }
+    .conv-row .when {
+      font-family: var(--font-mono); font-size: 10px;
+      color: var(--text-muted); text-align: right;
+    }
+    .empty { padding: 60px 0; text-align: center; color: var(--text-muted); font-size: 13px; }
+  </style>
 </head>
 <body>
 <div class="page">
-  <h1>Conversations</h1>
-  <p><a href="/chat">← Back to chat</a></p>
-  <table>
-    <thead><tr><th>Conversation</th><th>Title</th><th>Preview</th><th>Messages</th><th>Last activity</th></tr></thead>
-    <tbody>
-      {% for c in conversations %}
-      <tr>
-        <td class="mono">{{ c.conversation_ref }}</td>
-        <td>{{ c.title or '' }}</td>
-        <td>{{ c.preview or '' }}</td>
-        <td>{{ c.message_count }}</td>
-        <td class="mono">{{ c.last_message_at }}</td>
-      </tr>
+
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">ACME · OPS</span></div>
+    <nav class="nav">
+      <a href="/chat">Chat</a>
+      <a class="active" href="/conversations">Conversations</a>
+      <a href="/traces">Traces</a>
+      <a href="/eval">Eval</a>
+    </nav>
+    <div class="spacer"></div>
+    <span class="mono" style="font-size:11px; color: var(--text-secondary);">{{ user.username }}</span>
+    <span class="badge {% if user.primary_role == 'support_user' %}badge-accent{% elif user.primary_role == 'admin' %}badge-needsreview{% else %}badge-neutral{% endif %}" style="font-size:9px;">{{ user.primary_role }}</span>
+  </header>
+
+  <div class="page-header">
+    <div class="page-title">Conversations</div>
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input type="text" placeholder="search title, customer, issue…"/>
+    </div>
+    <a class="btn btn-sm btn-primary" href="/chat" style="text-decoration:none;">＋ New</a>
+  </div>
+
+  <main class="page-body">
+    {% if not groups %}
+      <div class="empty">No conversations yet. <a href="/chat">Start one.</a></div>
+    {% endif %}
+
+    {% for group_name, rows in groups %}
+    <div class="grp">
+      <div class="head">{{ group_name }}</div>
+      {% for c in rows %}
+      <a class="conv-row" href="/chat?conversation_ref={{ c.conversation_ref }}">
+        <div class="col-title">
+          <div class="title">{% if c.pending %}<span class="pending-dot"></span>{% endif %}{{ c.title or c.conversation_ref }}</div>
+          <div class="preview">{{ c.preview or '' }}</div>
+        </div>
+        <div class="state">{% if c.badge %}<span class="badge badge-{{ c.badge_class }}">{{ c.badge }}</span>{% endif %}</div>
+        <div class="when">{{ c.when }}</div>
+      </a>
       {% endfor %}
-    </tbody>
-  </table>
+    </div>
+    {% endfor %}
+  </main>
+
 </div>
 </body>
 </html>

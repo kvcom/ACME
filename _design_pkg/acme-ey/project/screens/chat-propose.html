@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Acme Ops · Chat · Propose Recovery Plan</title>
+<link rel="stylesheet" href="_shared.css">
+<style>
+  .workspace { grid-template-columns: 240px 1fr 320px; }
+  .composer { padding-top: 12px; }
+</style>
+</head>
+<body>
+<div class="app-slim">
+
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">ACME · OPS</span></div>
+    <nav class="nav">
+      <a class="active" href="#">Chat</a>
+      <a href="#">Conversations</a>
+      <a href="#">Traces</a>
+      <a href="#">Eval</a>
+    </nav>
+    <div class="spacer"></div>
+    <span class="mono" style="font-size:11px; color: var(--text-secondary);">sam.support</span>
+    <span class="badge" style="font-size:9px; background: var(--accent-bg); color: var(--accent-dim);">support_user</span>
+  </header>
+
+  <main class="workspace">
+
+    <!-- Sidebar -->
+    <aside class="sidebar sidebar-flex">
+      <button class="btn btn-sm" style="width:100%; justify-content:center; margin-bottom:14px;">＋ New conversation</button>
+
+      <div class="conv-scroll">
+        <div class="label" style="margin: 4px 4px 8px;">Today</div>
+        <div class="conv-item active">
+          <div class="title">ISS-102 recovery plan</div>
+          <div class="meta"><span class="pending-dot"></span>awaiting confirm</div>
+        </div>
+        <div class="conv-item">
+          <div class="title">ISS-301 warehouse notif</div>
+          <div class="meta">42m</div>
+        </div>
+        <div class="conv-item">
+          <div class="title">Acme · disambiguation</div>
+          <div class="meta">2h</div>
+        </div>
+
+        <div class="label" style="margin: 14px 4px 8px;">Yesterday</div>
+        <div class="conv-item">
+          <div class="title">ISS-401 credential rotation</div>
+          <div class="meta">created NA-1002</div>
+        </div>
+        <div class="conv-item">
+          <div class="title">ISS-501 maintenance drift</div>
+          <div class="meta">17h</div>
+        </div>
+      </div>
+
+      <div class="sidebar-foot">
+        <div class="provider-row">
+          <span>LLM</span>
+          <span><b>Anthropic</b> · haiku-4-5 <span class="dimmer">▾</span></span>
+        </div>
+        <div class="signout">Sign out</div>
+      </div>
+    </aside>
+
+    <!-- Thread -->
+    <section class="thread" style="padding: 32px 48px 80px;">
+
+      <!-- Earlier turn: short briefing -->
+      <div class="msg msg-user">
+        <div class="msg-body-user">What's the latest on Northwind ISS-102? What should we do next?</div>
+      </div>
+
+      <div class="msg msg-bot">
+        <div class="msg-body-bot">
+          <p>
+            <strong>Northwind / ISS-102</strong> — API integration delay, P1, <strong style="color: var(--color-danger-dim);">SLA breached</strong>.
+            Engineering reproduced intermittent token-refresh failure; the workaround isn't viable for production. Customer has asked for a written recovery plan by Friday, and there's no confirmed resolution date on file.
+          </p>
+          <p>
+            I'd recommend a <strong>PREPARE_RECOVERY_PLAN</strong> action at High priority. Rationale: Enterprise customer, P1, SLA breached, customer-requested deadline approaching.
+          </p>
+          <div class="trace-meta">
+            <a>TRC-00042</a><span class="sep">·</span>$0.0094<span class="sep">·</span>3,108 tokens<span class="sep">·</span>2.8s
+          </div>
+        </div>
+      </div>
+
+      <!-- Current turn: propose-confirm -->
+      <div class="msg msg-user">
+        <div class="msg-body-user">Create that recovery plan action — high priority, due tomorrow 9am Europe/London. Assign to me.</div>
+      </div>
+
+      <div class="msg msg-bot">
+        <div class="msg-body-bot">
+          <p>
+            Staged the action and locked an idempotency key — confirming twice won't create a duplicate. Review and confirm on the right, or cancel.
+          </p>
+          <div class="trace-meta">
+            <span class="badge badge-proposed">⏵ proposed</span>
+            <span class="sep"></span>
+            <a>TRC-00044</a><span class="sep">·</span>$0.0061<span class="sep">·</span>1,820 tokens<span class="sep">·</span>1.9s
+          </div>
+        </div>
+      </div>
+
+      <!-- Composer -->
+      <div class="composer">
+        <div class="composer-inner">
+          <input type="text" placeholder="Ask a follow-up, or confirm on the right…">
+          <button class="btn btn-sm btn-primary">Send</button>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Right rail · Proposed action card only -->
+    <aside class="rail">
+
+      <div class="action-card">
+        <div class="ah">
+          <div>
+            <div class="label" style="color: var(--accent-dim);">Action proposed</div>
+            <div class="mono" style="font-size:11px; color: var(--text-high); margin-top:2px;">PREPARE_RECOVERY_PLAN</div>
+          </div>
+        </div>
+        <div class="ab">
+          <div class="action-row"><span class="k">Customer</span> <span class="v">Northwind Energy</span></div>
+          <div class="action-row"><span class="k">Issue</span>    <span class="v">ISS-102</span></div>
+          <div class="action-row"><span class="k">Priority</span> <span class="v" style="color: var(--color-danger-dim);">High</span></div>
+          <div class="action-row"><span class="k">Due</span>      <span class="v">Tomorrow · 09:00 BST</span></div>
+          <div class="action-row"><span class="k">Owner</span>    <span class="v">sam.support</span></div>
+
+          <div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--border-subtle);">
+            <div class="label" style="margin-bottom: 6px;">Why</div>
+            <p style="font-size: 11px; color: var(--text-secondary); line-height: 1.5;">
+              Enterprise customer · P1 · SLA breached · customer requested written plan by Friday.
+            </p>
+          </div>
+
+          <div style="margin-top: 10px;">
+            <div class="label" style="margin-bottom: 6px;">Evidence</div>
+            <div style="font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); line-height: 1.6;">
+              ISS-102 · UPD-8821 · UPD-8822 · UPD-8823
+            </div>
+          </div>
+        </div>
+        <div class="af">
+          <button class="btn btn-sm">Cancel</button>
+          <button class="btn btn-sm btn-primary">Confirm</button>
+        </div>
+        <div style="padding: 6px 12px 10px; font-family: var(--font-mono); font-size: 9px; color: var(--text-dim); text-align: center;">
+          confirmation expires in 9m 42s
+        </div>
+      </div>
+
+    </aside>
+
+  </main>
+
+</div>
+</body>
+</html>

@@ -2,33 +2,128 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>Acme Operations · Sign in</title>
+  <title>Acme Ops · Sign in</title>
   <link rel="stylesheet" href="/static/app.css"/>
+  <style>
+    body { display: grid; place-items: center; height: 100vh; }
+    .card { width: 380px; padding: 32px; }
+    .wordmark {
+      font-family: var(--font-mono); font-size: 16px; font-weight: 500;
+      letter-spacing: 0.14em; color: var(--text-primary);
+      text-align: center; margin-bottom: 4px;
+    }
+    .wordmark .dot { color: var(--accent); padding: 0 2px; }
+    .tagline {
+      font-family: var(--font-ui); font-size: 11px;
+      color: var(--text-muted); text-align: center; margin-bottom: 28px;
+    }
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
+    .field input {
+      width: 100%; height: 36px; padding: 0 12px;
+      border: 1px solid var(--border-medium); border-radius: var(--radius-md);
+      background: var(--bg-surface); color: var(--text-primary);
+      font-family: var(--font-mono); font-size: 12px; outline: none;
+    }
+    .field input:focus { border-color: var(--accent-border); }
+    .submit {
+      width: 100%; height: 36px; border-radius: var(--radius-md);
+      border: 1px solid var(--accent); background: var(--accent); color: #0a0a0a;
+      font-size: 12px; font-weight: 500; cursor: pointer; margin-top: 8px;
+    }
+    .divider {
+      display: flex; align-items: center; gap: 10px;
+      margin: 22px 0 14px;
+      font-size: 10px; letter-spacing: 0.10em; text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border-subtle); }
+    .role-pill {
+      display: grid; grid-template-columns: 1fr auto;
+      align-items: center; gap: 12px;
+      width: 100%; background: var(--bg-surface);
+      border: 1px solid var(--border-medium); border-radius: var(--radius-md);
+      padding: 10px 14px; margin-bottom: 6px;
+      cursor: pointer; text-align: left; color: var(--text-high);
+      font-family: inherit;
+    }
+    .role-pill:hover { background: var(--bg-surface-raised); border-color: var(--border-strong); }
+    .role-pill .who { font-family: var(--font-mono); font-size: 12px; color: var(--text-high); }
+    .role-pill .role { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+    .role-pill .tag {
+      font-family: var(--font-ui); font-size: 9px;
+      letter-spacing: 0.10em; text-transform: uppercase;
+      padding: 2px 8px; border-radius: var(--radius-full);
+      background: var(--color-info-bg); color: var(--color-info-dim);
+    }
+    .role-pill.support .tag { background: var(--accent-bg); color: var(--accent-dim); }
+    .role-pill.admin .tag { background: var(--color-caution-bg); color: var(--color-caution-dim); }
+    .footnote {
+      margin-top: 20px; text-align: center;
+      font-family: var(--font-mono); font-size: 10px;
+      color: var(--text-dim); line-height: 1.5;
+    }
+    .err {
+      margin-top: 8px;
+      font-size: 11px; color: var(--color-danger-dim);
+      text-align: center;
+    }
+  </style>
 </head>
 <body>
-  <div class="login-wrap">
-    <h1>Acme Operations</h1>
-    <p class="sub">Sign in to continue</p>
-    <form class="login-form" method="post" action="/login">
-      <label for="username">Username</label>
-      <input id="username" name="username" autocomplete="username" required/>
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required/>
-      {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
-      <button class="primary" type="submit">Sign in</button>
+  <div class="card">
+    <div class="wordmark">ACME<span class="dot">·</span>OPS</div>
+    <div class="tagline">Operations assistant</div>
+
+    <form method="post" action="/login">
+      <div class="field">
+        <label for="u">Username</label>
+        <input id="u" name="username" type="text" placeholder="sarah.sales" autocomplete="username" required/>
+      </div>
+      <div class="field">
+        <label for="p">Password</label>
+        <input id="p" name="password" type="password" placeholder="••••••••" autocomplete="current-password" required/>
+      </div>
+      {% if error %}<div class="err">{{ error }}</div>{% endif %}
+      <button class="submit" type="submit">Sign in</button>
     </form>
-    <div class="login-quick">
-      <div class="section-label" style="margin-top:0">Demo users</div>
-      <button type="button" onclick="prefill('sarah.sales')">Sarah Sales <span class="role-badge">sales_user</span></button>
-      <button type="button" onclick="prefill('sam.support')">Sam Support <span class="role-badge">support_user</span></button>
-      <button type="button" onclick="prefill('admin.acme')">Admin Acme <span class="role-badge">admin</span></button>
-    </div>
-    <p class="login-note">Direct-grant Keycloak login is used for demo simplicity. Production would use Authorization Code with PKCE.</p>
+
+    <div class="divider">Or sign in as</div>
+
+    <button class="role-pill" type="button" onclick="prefill('sarah.sales')">
+      <div>
+        <div class="who">sarah.sales</div>
+        <div class="role">read customers, issues, recommendations</div>
+      </div>
+      <span class="tag">sales</span>
+    </button>
+
+    <button class="role-pill support" type="button" onclick="prefill('sam.support')">
+      <div>
+        <div class="who">sam.support</div>
+        <div class="role">propose &amp; confirm support actions</div>
+      </div>
+      <span class="tag">support</span>
+    </button>
+
+    <button class="role-pill admin" type="button" onclick="prefill('admin.acme')">
+      <div>
+        <div class="who">admin.acme</div>
+        <div class="role">full read, write, cancel</div>
+      </div>
+      <span class="tag">admin</span>
+    </button>
+
+    <p class="footnote">
+      Direct-grant Keycloak login for demo simplicity.<br/>
+      Production would use Authorization Code with PKCE.
+    </p>
   </div>
+
   <script>
     function prefill(user) {
-      document.getElementById('username').value = user;
-      document.getElementById('password').value = 'password';
+      document.getElementById('u').value = user;
+      document.getElementById('p').value = 'password';
     }
   </script>
 </body>

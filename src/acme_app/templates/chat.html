@@ -2,53 +2,86 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>Acme Operations · Chat</title>
+  <title>Acme Ops · Chat</title>
   <link rel="stylesheet" href="/static/app.css"/>
+  <style>
+    .workspace { grid-template-columns: 240px 1fr 320px; }
+    .composer { padding-top: 12px; }
+    .right-rail-empty { display: none; }
+  </style>
 </head>
-<body data-conversation-ref="{{ conversation_ref }}">
-<div class="layout">
-  <aside class="sidebar">
-    <p class="brand">Acme Operations</p>
-    <p class="brand-sub">Assistant</p>
-    <div class="user-line">
-      <strong>{{ user.username }}</strong>
-      <span class="role-badge">{{ user.primary_role }}</span>
-    </div>
-    <div class="section-label">Conversations</div>
-    <ul class="conv-list" id="conv-list">
-      <li><div class="conv-title">Current</div><div class="conv-meta">{{ conversation_ref }}</div></li>
-    </ul>
-    <div class="section-label">LLM provider</div>
-    <select id="provider">
-      {% for p in providers %}
-      <option value="{{ p }}" {% if p == provider %}selected{% endif %}>{{ p }}</option>
-      {% endfor %}
-    </select>
-    <div class="section-label">Links</div>
-    <ul class="conv-list">
-      <li><a href="/traces">Decision traces</a></li>
-      <li><a href="/eval">Evaluation results</a></li>
-      <li><form method="post" action="/logout" style="margin:0"><button class="ghost" style="width:100%;text-align:left" type="submit">Sign out</button></form></li>
-    </ul>
-  </aside>
+<body data-conversation-ref="{{ conversation_ref }}" data-role="{{ user.primary_role }}">
+<div class="app-slim">
 
-  <main class="center">
-    <div class="thread" id="thread"></div>
-    <div class="input-row">
-      <input id="query" placeholder="Ask about customers, issues, or actions. Try: 'Brief me on Northwind.'"/>
-      <button class="primary" id="send">Send</button>
-    </div>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">ACME · OPS</span></div>
+    <nav class="nav">
+      <a class="active" href="/chat">Chat</a>
+      <a href="/conversations">Conversations</a>
+      <a href="/traces">Traces</a>
+      <a href="/eval">Eval</a>
+    </nav>
+    <div class="spacer"></div>
+    <span class="mono" style="font-size:11px; color: var(--text-secondary);">{{ user.username }}</span>
+    <span class="badge {% if user.primary_role == 'support_user' %}badge-accent{% elif user.primary_role == 'admin' %}badge-needsreview{% else %}badge-neutral{% endif %}" style="font-size:9px;">{{ user.primary_role }}</span>
+  </header>
+
+  <main class="workspace">
+
+    <aside class="sidebar sidebar-flex">
+      <button class="btn btn-sm" style="width:100%; justify-content:center; margin-bottom:14px;" onclick="newConversation()">＋ New conversation</button>
+
+      <div class="conv-scroll" id="conv-list">
+        <div class="label" style="margin: 4px 4px 8px;">Today</div>
+        <div class="conv-item active">
+          <div class="title">Current</div>
+          <div class="meta mono">{{ conversation_ref }}</div>
+        </div>
+      </div>
+
+      <div class="sidebar-foot">
+        <div class="provider-row" onclick="cycleProvider()" title="Click to cycle provider">
+          <span>LLM</span>
+          <span><b id="provider-name">{{ provider }}</b> <span class="dimmer">▾</span></span>
+        </div>
+        <form method="post" action="/logout" style="margin:0">
+          <button class="signout" type="submit" style="background:transparent;border:0;width:100%;text-align:left;font-family:inherit;font-size:10px;cursor:pointer;">Sign out</button>
+        </form>
+      </div>
+    </aside>
+
+    <section class="thread" id="thread" style="padding: 32px 48px 80px;">
+
+      <div class="composer">
+        <div class="composer-inner">
+          <input id="query" type="text" placeholder="Ask about a customer, issue, or next action…" autofocus/>
+          <button class="btn btn-sm btn-primary" id="send">Send</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="rail" id="rail">
+      <!-- Right rail content (evidence panel during streaming, proposed-action card after propose,
+           role-reference card after denial) is injected by chat.js -->
+    </aside>
+
   </main>
 
-  <aside class="right">
-    <h3>Evidence</h3>
-    <ul class="evidence-list" id="evidence-list"></ul>
-    <h3 style="margin-top:24px">Proposed action</h3>
-    <div id="proposed-card"></div>
-    <h3 style="margin-top:24px">Trace summary</h3>
-    <div class="trace-summary" id="trace-summary"></div>
-  </aside>
 </div>
+<script>
+  const PROVIDERS = {{ providers | tojson if providers else '["stub","anthropic","openai","ollama"]' | safe }};
+  function cycleProvider() {
+    const el = document.getElementById('provider-name');
+    const i = PROVIDERS.indexOf(el.textContent);
+    el.textContent = PROVIDERS[(i + 1) % PROVIDERS.length] || PROVIDERS[0];
+  }
+  function newConversation() {
+    const ref = 'CONV-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+    document.body.dataset.conversationRef = ref;
+    document.getElementById('thread').querySelectorAll('.msg').forEach(n => n.remove());
+    document.getElementById('rail').innerHTML = '';
+  }
+</script>
 <script src="/static/chat.js"></script>
 </body>
 </html>

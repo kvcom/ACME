@@ -2,40 +2,143 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>Acme Operations · Traces</title>
+  <title>Acme Ops · Traces</title>
   <link rel="stylesheet" href="/static/app.css"/>
+  <style>
+    .page { display: grid; grid-template-rows: 40px auto auto 1fr; height: 100vh; overflow: hidden; }
+    .page-header {
+      padding: 22px 32px 14px; border-bottom: 1px solid var(--border-subtle);
+      display: flex; align-items: center; gap: 16px;
+    }
+    .page-title { font-size: 16px; color: var(--text-primary); font-weight: 500; flex: 1; }
+    .page-sub { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+    .search {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--bg-surface); border: 1px solid var(--border-medium);
+      border-radius: var(--radius-md); padding: 6px 10px; width: 280px;
+    }
+    .search input { flex: 1; background: transparent; border: 0; outline: 0;
+      color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; }
+    .search input::placeholder { color: var(--text-dim); }
+    .search svg { width: 12px; height: 12px; color: var(--text-muted); }
+    .filter-bar {
+      display: flex; gap: 8px; align-items: center;
+      padding: 10px 32px 12px; border-bottom: 1px solid var(--border-subtle);
+    }
+    .pill-group {
+      display: flex; border: 1px solid var(--border-medium);
+      border-radius: var(--radius-full); padding: 2px; background: var(--bg-surface);
+    }
+    .pill-group button {
+      font-family: var(--font-ui); font-size: 10px;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-muted); background: transparent; border: 0;
+      padding: 5px 12px; border-radius: var(--radius-full);
+      cursor: pointer; white-space: nowrap;
+    }
+    .pill-group button.active { background: var(--bg-surface-raised); color: var(--text-primary); }
+    .table-wrap { overflow-y: auto; overflow-x: auto; padding: 0 32px 24px; }
+    .ttbl { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    .ttbl th {
+      text-align: left; font-family: var(--font-ui); font-size: 9px; font-weight: 500;
+      letter-spacing: 0.10em; text-transform: uppercase; color: var(--text-muted);
+      padding: 10px 12px; border-bottom: 1px solid var(--border-subtle);
+      position: sticky; top: 0; z-index: 2; background: var(--bg-base); white-space: nowrap;
+    }
+    .ttbl th.active { color: var(--text-secondary); }
+    .ttbl td {
+      padding: 13px 12px; border-bottom: 1px solid var(--border-subtle);
+      font-size: 11px; color: var(--text-high); vertical-align: middle; white-space: nowrap;
+    }
+    .ttbl tr { cursor: pointer; }
+    .ttbl tr:hover td { background: var(--bg-surface-raised); }
+    .ttbl tr.selected td { background: rgba(217,119,87,0.05); }
+    .trace-id { font-family: var(--font-mono); font-size: 11px; color: var(--accent-dim); text-decoration: none; }
+    .q-cell {
+      font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);
+      max-width: 380px; overflow: hidden; text-overflow: ellipsis;
+    }
+    .role-tag { font-family: var(--font-mono); font-size: 10px; }
+    .role-tag.sales_user   { color: var(--color-info-dim); }
+    .role-tag.support_user { color: var(--accent-dim); }
+    .role-tag.admin   { color: var(--color-caution-dim); }
+    .num { text-align: right; font-family: var(--font-mono); }
+    .empty { padding: 40px; text-align: center; color: var(--text-muted); font-size: 13px; }
+  </style>
 </head>
 <body>
 <div class="page">
-  <h1>Decision traces</h1>
-  <p><a href="/chat">← Back to chat</a></p>
-  <table>
-    <thead>
-      <tr>
-        <th>Trace</th><th>User</th><th>Role</th><th>Intent</th><th>Status</th>
-        <th>Provider</th><th>Tokens</th><th>Cost (USD)</th><th>Latency (ms)</th><th>Created</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for t in traces %}
-      <tr onclick="location='/traces/{{ t.trace_ref }}'" style="cursor:pointer">
-        <td class="mono"><a href="/traces/{{ t.trace_ref }}">{{ t.trace_ref }}</a></td>
-        <td>{{ t.username }}</td>
-        <td><span class="role-badge">{{ t.role }}</span></td>
-        <td>{{ t.intent or '' }}</td>
-        <td><span class="badge badge-{{ (t.status or '')|lower|replace(' ','-') }}">{{ t.status }}</span></td>
-        <td>{{ t.provider }}</td>
-        <td class="mono">{{ t.total_tokens }}</td>
-        <td class="mono">${{ '%.4f' % t.cost_usd }}</td>
-        <td class="mono">{{ t.latency_ms }}</td>
-        <td class="mono">{{ t.created_at }}</td>
-      </tr>
-      {% endfor %}
-      {% if not traces %}
-      <tr><td colspan="10" style="color:var(--muted);text-align:center;padding:24px">No traces recorded yet. Send a message from /chat.</td></tr>
-      {% endif %}
-    </tbody>
-  </table>
+
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">ACME · OPS</span></div>
+    <nav class="nav">
+      <a href="/chat">Chat</a>
+      <a href="/conversations">Conversations</a>
+      <a class="active" href="/traces">Traces</a>
+      <a href="/eval">Eval</a>
+    </nav>
+    <div class="spacer"></div>
+    <span class="mono" style="font-size:11px; color: var(--text-secondary);">{{ user.username }}</span>
+    <span class="badge {% if user.primary_role == 'support_user' %}badge-accent{% elif user.primary_role == 'admin' %}badge-needsreview{% else %}badge-neutral{% endif %}" style="font-size:9px;">{{ user.primary_role }}</span>
+  </header>
+
+  <div class="page-header">
+    <div>
+      <div class="page-title">Decision traces</div>
+      <div class="page-sub">{{ traces|length }} trace{{ '' if traces|length == 1 else 's' }} · ${{ '%.4f' % (traces|sum(attribute='cost_usd')) }} total</div>
+    </div>
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input type="text" placeholder="trace · user · ISS-… · NA-…"/>
+    </div>
+  </div>
+
+  <div class="filter-bar">
+    <div class="pill-group">
+      <button class="active">all</button>
+      <button>grounded</button>
+      <button>created</button>
+      <button>proposed</button>
+      <button>denied</button>
+      <button>blocked</button>
+    </div>
+  </div>
+
+  <main class="table-wrap">
+    {% if not traces %}
+      <div class="empty">No traces recorded yet. Send a message from <a href="/chat">/chat</a>.</div>
+    {% else %}
+    <table class="ttbl">
+      <thead>
+        <tr>
+          <th>trace</th>
+          <th>user</th>
+          <th>query</th>
+          <th>final</th>
+          <th class="num">cost</th>
+          <th class="num">tokens</th>
+          <th class="num">latency</th>
+          <th class="active">when</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in traces %}
+        <tr onclick="location='/traces/{{ t.trace_ref }}'">
+          <td><a class="trace-id" href="/traces/{{ t.trace_ref }}">{{ t.trace_ref }}</a></td>
+          <td>{{ t.username }} <span class="role-tag {{ t.role }}">{{ t.role.replace('_user','') }}</span></td>
+          <td><div class="q-cell">"{{ t.intent or '—' }}"</div></td>
+          <td><span class="badge badge-{{ t.badge_class }}">{{ t.status or '—' }}</span></td>
+          <td class="num">${{ '%.4f' % (t.cost_usd or 0) }}</td>
+          <td class="num">{{ t.total_tokens }}</td>
+          <td class="num">{{ (t.latency_ms or 0) }} ms</td>
+          <td>{{ t.when }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </main>
+
 </div>
 </body>
 </html>

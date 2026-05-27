@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Acme Ops · Conversations</title>
+<link rel="stylesheet" href="_shared.css">
+<style>
+  .page {
+    display: grid;
+    grid-template-rows: 40px auto 1fr;
+    height: 100vh;
+    overflow: hidden;
+  }
+  .page-header {
+    padding: 22px 32px 14px;
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .page-title { font-size: 16px; color: var(--text-primary); font-weight: 500; flex: 1; }
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-medium);
+    border-radius: var(--radius-md);
+    padding: 6px 10px;
+    width: 280px;
+  }
+  .search input {
+    flex: 1; background: transparent; border: 0; outline: 0;
+    color: var(--text-primary); font-family: var(--font-mono); font-size: 11px;
+  }
+  .search input::placeholder { color: var(--text-dim); }
+  .search svg { width: 12px; height: 12px; color: var(--text-muted); }
+
+  .page-body {
+    overflow-y: auto;
+    padding: 18px 32px 32px;
+  }
+
+  .grp {
+    margin-bottom: 22px;
+  }
+  .grp .head {
+    font-family: var(--font-ui);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 4px 4px 10px;
+  }
+  .conv-row {
+    display: grid;
+    grid-template-columns: 1fr 100px 70px;
+    gap: 16px;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    cursor: pointer;
+    transition: background 100ms;
+  }
+  .grp .conv-row:first-of-type { border-top: 1px solid var(--border-subtle); }
+  .conv-row:hover { background: var(--bg-surface-raised); }
+  .conv-row .col-title {
+    overflow: hidden;
+  }
+  .conv-row .title {
+    color: var(--text-high);
+    font-size: 13px;
+    margin-bottom: 3px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .conv-row .title .pending-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+  }
+  .conv-row .preview {
+    color: var(--text-muted);
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: var(--font-mono);
+  }
+  .conv-row .state {
+    text-align: right;
+  }
+  .conv-row .when {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    text-align: right;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">ACME · OPS</span></div>
+    <nav class="nav">
+      <a href="#">Chat</a>
+      <a class="active" href="#">Conversations</a>
+      <a href="#">Traces</a>
+      <a href="#">Eval</a>
+    </nav>
+    <div class="spacer"></div>
+    <span class="mono" style="font-size:11px; color: var(--text-secondary);">sam.support</span>
+    <span class="badge" style="font-size:9px; background: var(--accent-bg); color: var(--accent-dim);">support_user</span>
+  </header>
+
+  <div class="page-header">
+    <div class="page-title">Conversations</div>
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input type="text" placeholder="search title, customer, issue…">
+    </div>
+    <button class="btn btn-sm btn-primary">＋ New</button>
+  </div>
+
+  <main class="page-body">
+
+    <div class="grp">
+      <div class="head">Today</div>
+
+      <div class="conv-row">
+        <div class="col-title">
+          <div class="title"><span class="pending-dot"></span>ISS-102 recovery plan</div>
+          <div class="preview">"Create that recovery plan action — high priority, due tomorrow 9am…"</div>
+        </div>
+        <div class="state"><span class="badge badge-proposed">proposed</span></div>
+        <div class="when">12:14</div>
+      </div>
+
+      <div class="conv-row">
+        <div class="col-title">
+          <div class="title">ISS-301 warehouse notifications</div>
+          <div class="preview">"Where are the warehouse notif failures originating? Acme Logistics."</div>
+        </div>
+        <div class="state"></div>
+        <div class="when">11:32</div>
+      </div>
+
+      <div class="conv-row">
+        <div class="col-title">
+          <div class="title">Acme · disambiguation</div>
+          <div class="preview">"What's going on with Acme?" — 2 customer matches surfaced</div>
+        </div>
+        <div class="state"><span class="badge badge-clarify">clarify</span></div>
+        <div class="when">10:58</div>
+      </div>
+
+      <div class="conv-row">
+        <div class="col-title">
+          <div class="title">Northwind briefing</div>
+          <div class="preview">"I have a call with Northwind today. What are the open issues…"</div>
+        </div>
+        <div class="state"><span class="badge badge-denied">denied</span></div>
+        <div class="when">09:12</div>
+      </div>
+    </div>
+
+    <div class="grp">
+      <div class="head">Yesterday</div>
+
+      <div class="conv-row">
+        <div class="col-title">
+          <div class="title">ISS-401 credential rotation</div>
+          <div class="preview">"Plan a credential rotation for Acme Manufacturing P1." → created NA-1002</div>
+        </div>
+        <div class="state"><span class="badge badge-created">created</span></div>
+        <div class="when">17:48</div>
+      </div>
+
+      <div class="conv-row">
+        <div class="col-title">
+          <div class="title">ISS-501 maintenance drift</div>
+          <div class="preview">"Skyline Aviation P2 maintenance scheduling drift — context?"</div>
+        </div>
+        <div class="state"></div>
+        <div class="when">16:24</div>
+      </div>
+
+      <div class="conv-row">
+        <div class="col-title">
+          <div class="title">Contoso onboarding status</div>
+          <div class="preview">"What's holding up Contoso Retail onboarding?"</div>
+        </div>
+        <div class="state"></div>
+        <div class="when">14:08</div>
+      </div>
+
+      <div class="conv-row">
+        <div class="col-title">
+          <div class="title">BlueRiver action cancellation</div>
+          <div class="preview">"Cancel the BlueRiver review action — customer rescheduled."</div>
+        </div>
+        <div class="state"><span class="badge badge-cancelled">cancelled</span></div>
+        <div class="when">11:14</div>
+      </div>
+    </div>
+
+    <div class="grp">
+      <div class="head">Earlier</div>
+
+      <div class="conv-row">
+        <div class="col-title">
+          <div class="title"><span class="pending-dot"></span>Skyline P2 review</div>
+          <div class="preview">"Propose a schedule-review action for Skyline."</div>
+        </div>
+        <div class="state"><span class="badge badge-proposed">proposed</span></div>
+        <div class="when">Sun</div>
+      </div>
+
+      <div class="conv-row">
+        <div class="col-title">
+          <div class="title">Closure check ISS-209</div>
+          <div class="preview">"Can we close ISS-209?" → not ready, missing customer acceptance</div>
+        </div>
+        <div class="state"><span class="badge badge-insufficient">insufficient</span></div>
+        <div class="when">Mon</div>
+      </div>
+
+      <div class="conv-row">
+        <div class="col-title">
+          <div class="title">Manufacturing escalation log</div>
+          <div class="preview">"Pull all P1/P2 escalations for Acme Manufacturing last 30d."</div>
+        </div>
+        <div class="state"></div>
+        <div class="when">Sun</div>
+      </div>
+    </div>
+
+    <div style="text-align: center; padding: 10px 0;">
+      <button class="btn btn-sm btn-ghost">load older</button>
+    </div>
+
+  </main>
+
+</div>
+</body>
+</html>
