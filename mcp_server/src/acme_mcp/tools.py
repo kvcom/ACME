@@ -1,76 +1,286 @@
+"""MCP tool implementations.
+
+Every write tool requires a confirmation_token (HMAC) which is verified using a
+shared secret. The MCP server enforces:
+
+  - action_type ∈ ALLOWED_ACTION_TYPES
+  - role ∈ allowed roles for the action_type
+  - idempotency_key uniqueness
+  - confirmation_token signature & expiry
+
+This is the second gate (the app is the first). It exists so the MCP server is
+safe to expose to other clients in future.
+"""
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import os
+import time
 from datetime import datetime
+from typing import Any
 
 from acme_mcp.db import get_conn
+from acme_mcp.validation import ALLOWED_ACTION_TYPES, ALLOWED_ISSUE_STATUSES, role_may_create
 
 
-def search_customers(customer_name: str) -> dict:
+HMAC_SECRET = os.getenv('CONFIRMATION_HMAC_SECRET', 'dev-only-secret-change-me')
+
+
+def _verify_token(token: str, expected_action_type: str | None = None, expected_issue_ref: str | None = None) -> tuple[bool, str]:
+    parts = token.split('|')
+    if len(parts) != 5:
+        return False, 'token malformed'
+    trace_ref, action_type, issue_ref, expires_at_s, sig = parts
+    payload = f'{trace_ref}|{action_type}|{issue_ref}|{expires_at_s}'
+    expected = hmac.new(HMAC_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        return False, 'signature mismatch'
+    try:
+        if time.time() > int(expires_at_s):
+            return False, 'token expired'
+    except ValueError:
+        return False, 'expiry malformed'
+    if expected_action_type and action_type != expected_action_type:
+        return False, f'token action_type mismatch (got {action_type}, expected {expected_action_type})'
+    if expected_issue_ref and issue_ref != expected_issue_ref:
+        return False, f'token issue_ref mismatch (got {issue_ref}, expected {expected_issue_ref})'
+    return True, 'ok'
+
+
+def search_customers(customer_name: str) -> dict[str, Any]:
+    name = (customer_name or '').strip()
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id::text, name, region FROM customers WHERE lower(name) LIKE lower(%s) ORDER BY name LIMIT 10", (f"%{customer_name}%",))
+        if name:
+            cur.execute(
+                "SELECT id::text, name, region, tier FROM customers WHERE lower(name) LIKE lower(%s) ORDER BY name LIMIT 10",
+                (f'%{name}%',),
+            )
+        else:
+            cur.execute("SELECT id::text, name, region, tier FROM customers ORDER BY name LIMIT 25")
         rows = cur.fetchall()
-    return {'matches': [{'customer_id': r[0], 'name': r[1], 'region': r[2]} for r in rows]}
+    return {'matches': [{'customer_id': r[0], 'name': r[1], 'region': r[2], 'tier': r[3]} for r in rows]}
 
 
-def get_customer_profile(customer_name: str) -> dict:
+def get_customer_profile(customer_name: str) -> dict[str, Any]:
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id::text, name, tier, industry, region, customer_timezone, account_owner FROM customers WHERE lower(name) LIKE lower(%s) ORDER BY name LIMIT 1", (f"%{customer_name}%",))
+        cur.execute(
+            "SELECT id::text, name, tier, industry, region, customer_timezone, account_owner FROM customers "
+            "WHERE lower(name)=lower(%s) OR lower(name) LIKE lower(%s) ORDER BY name LIMIT 1",
+            (customer_name, f'%{customer_name}%'),
+        )
         row = cur.fetchone()
     if row is None:
-        return {'not_found': True}
-    return {'customer_id': row[0], 'name': row[1], 'tier': row[2], 'industry': row[3], 'region': row[4], 'customer_timezone': row[5], 'account_owner': row[6]}
+        return {'not_found': True, 'queried': customer_name}
+    return {
+        'customer_id': row[0], 'name': row[1], 'tier': row[2], 'industry': row[3],
+        'region': row[4], 'customer_timezone': row[5], 'account_owner': row[6],
+    }
 
 
-def get_open_issues(customer_id: str) -> dict:
+def _resolve_customer_id(cur, customer_id: str | None, customer_name: str | None) -> str | None:
+    if customer_id:
+        return customer_id
+    if customer_name:
+        cur.execute(
+            "SELECT id::text FROM customers WHERE lower(name)=lower(%s) OR lower(name) LIKE lower(%s) ORDER BY name LIMIT 1",
+            (customer_name, f'%{customer_name}%'),
+        )
+        row = cur.fetchone()
+        if row:
+            return row[0]
+    return None
+
+
+def get_open_issues(customer_id: str | None = None, customer_name: str | None = None) -> dict[str, Any]:
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT issue_ref, title, severity, status, sla_status FROM issues WHERE customer_id::text = %s AND status NOT IN ('Closed','Resolved')", (customer_id,))
+        cust_id = _resolve_customer_id(cur, customer_id, customer_name)
+        if cust_id is None:
+            return {'issues': [], 'not_found': True}
+        cur.execute(
+            "SELECT issue_ref, title, severity, status, sla_status, owner "
+            "FROM issues WHERE customer_id::text=%s AND status NOT IN ('Closed','Resolved') "
+            "ORDER BY CASE severity WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 ELSE 4 END",
+            (cust_id,),
+        )
         rows = cur.fetchall()
-    return {'issues': [{'issue_ref': r[0], 'title': r[1], 'severity': r[2], 'status': r[3], 'sla_status': r[4]} for r in rows]}
+    return {
+        'customer_id': cust_id,
+        'issues': [
+            {'issue_ref': r[0], 'title': r[1], 'severity': r[2], 'status': r[3], 'sla_status': r[4], 'owner': r[5]}
+            for r in rows
+        ],
+    }
 
 
-def summarise_issue_history(issue_ref: str) -> dict:
+def summarise_issue_history(issue_ref: str) -> dict[str, Any]:
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT i.issue_ref, i.title, i.description FROM issues i WHERE i.issue_ref=%s", (issue_ref,))
+        cur.execute(
+            "SELECT i.issue_ref, i.title, i.description, i.severity, i.status, i.sla_status, i.owner, c.name, c.tier "
+            "FROM issues i JOIN customers c ON c.id = i.customer_id WHERE i.issue_ref=%s",
+            (issue_ref,),
+        )
         issue = cur.fetchone()
-        cur.execute("SELECT update_text FROM issue_updates u JOIN issues i ON i.id=u.issue_id WHERE i.issue_ref=%s ORDER BY created_at DESC LIMIT 3", (issue_ref,))
-        updates = [r[0] for r in cur.fetchall()]
-    if issue is None:
-        return {'not_found': True}
-    return {'issue_ref': issue[0], 'summary': f"{issue[1]}: {issue[2]}", 'latest_update': updates[0] if updates else '', 'evidence': [issue_ref]}
+        if issue is None:
+            return {'not_found': True, 'issue_ref': issue_ref}
+        cur.execute(
+            "SELECT u.id::text, u.update_text, u.update_type, u.created_by, u.created_at "
+            "FROM issue_updates u JOIN issues i ON i.id=u.issue_id WHERE i.issue_ref=%s "
+            "ORDER BY u.created_at DESC LIMIT 8",
+            (issue_ref,),
+        )
+        updates = [
+            {'id': r[0], 'update_text': r[1], 'update_type': r[2], 'created_by': r[3], 'created_at': r[4].isoformat()}
+            for r in cur.fetchall()
+        ]
+    return {
+        'issue_ref': issue[0],
+        'title': issue[1],
+        'description': issue[2],
+        'severity': issue[3],
+        'status': issue[4],
+        'sla_status': issue[5],
+        'owner': issue[6],
+        'customer_name': issue[7],
+        'customer_tier': issue[8],
+        'summary': f'{issue[1]}: {issue[2]}',
+        'latest_update': updates[0]['update_text'] if updates else '',
+        'updates': updates,
+        'evidence': [f'issue:{issue[0]}'] + [f'update:{u["id"]}' for u in updates[:3]],
+    }
 
 
-def recommend_next_action(issue_ref: str) -> dict:
-    return {'action_type': 'PREPARE_RECOVERY_PLAN', 'priority': 'High', 'title': f'Prepare recovery plan for {issue_ref}', 'description': 'Create a written recovery plan covering root cause, owner and expected resolution date.', 'rationale': 'High-risk issue under SLA pressure', 'evidence': [issue_ref]}
+def recommend_next_action(issue_ref: str) -> dict[str, Any]:
+    history = summarise_issue_history(issue_ref)
+    if history.get('not_found'):
+        return {'not_found': True, 'issue_ref': issue_ref}
+    severity = history.get('severity', 'P3')
+    sla = history.get('sla_status', 'Within SLA')
+    tier = history.get('customer_tier', 'Mid-market')
+    if tier in ('Enterprise', 'Strategic') and severity == 'P1' and sla == 'Breached':
+        action_type, priority = 'PREPARE_RECOVERY_PLAN', 'Critical'
+    elif severity == 'P1':
+        action_type, priority = 'PREPARE_RECOVERY_PLAN', 'High'
+    elif severity == 'P2' and sla == 'At Risk':
+        action_type, priority = 'ESCALATE_ISSUE', 'High'
+    elif not history.get('owner'):
+        action_type, priority = 'ASSIGN_OWNER', 'Medium'
+    else:
+        action_type, priority = 'CUSTOMER_FOLLOW_UP', 'Medium'
+    return {
+        'issue_ref': issue_ref,
+        'action_type': action_type,
+        'priority': priority,
+        'title': f'{action_type.replace("_", " ").title()} for {history.get("customer_name", "customer")} {issue_ref}',
+        'description': f'Recommended in response to {severity} issue (SLA: {sla}).',
+        'rationale': f'{tier} customer, {severity} issue, SLA {sla}.',
+        'evidence': history.get('evidence', []),
+    }
 
 
-def create_next_action(actor: dict, issue_ref: str, action_type: str, title: str, description: str, priority: str, due_at: str | None, evidence: list[str], idempotency_key: str, confirmation_token: str) -> dict:
-    if not confirmation_token:
-        return {'created': False, 'denied': True, 'reason': 'confirmation_token required'}
+def create_next_action(
+    actor: dict[str, Any],
+    issue_ref: str,
+    action_type: str,
+    title: str,
+    description: str,
+    priority: str,
+    due_at: str | None,
+    evidence: list[str],
+    idempotency_key: str,
+    confirmation_token: str,
+) -> dict[str, Any]:
+    if action_type not in ALLOWED_ACTION_TYPES:
+        return {'created': False, 'denied': True, 'reason': f'Unknown action_type: {action_type}'}
+    role = actor.get('role', '')
+    if not role_may_create(role, action_type):
+        return {'created': False, 'denied': True, 'reason': f'{role} cannot create {action_type}'}
+    ok, reason = _verify_token(confirmation_token, expected_action_type=action_type, expected_issue_ref=issue_ref)
+    if not ok:
+        return {'created': False, 'denied': True, 'reason': f'confirmation_token invalid: {reason}'}
+
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute('SELECT action_ref FROM next_actions WHERE idempotency_key=%s', (idempotency_key,))
         existing = cur.fetchone()
         if existing:
+            conn.commit()
             return {'created': False, 'duplicate': True, 'existing_action_ref': existing[0]}
         cur.execute('SELECT id::text, customer_id::text FROM issues WHERE issue_ref=%s', (issue_ref,))
         issue = cur.fetchone()
         if not issue:
-            return {'created': False, 'denied': True, 'reason': 'Issue not found'}
+            return {'created': False, 'denied': True, 'reason': f'Issue {issue_ref} not found'}
         issue_id, customer_id = issue
-        action_ref = f"NA-{int(datetime.utcnow().timestamp())}"
-        cur.execute("INSERT INTO next_actions (action_ref, customer_id, issue_id, action_type, title, description, priority, status, owner_role, owner_name, due_at, rationale, evidence_json, created_by, created_by_role, idempotency_key) VALUES (%s,%s,%s,%s,%s,%s,%s,'Open',%s,%s,%s,%s,%s::jsonb,%s,%s,%s)",
-            (action_ref, customer_id, issue_id, action_type, title, description, priority, actor.get('role'), actor.get('username'), due_at, 'Created via MCP', str(evidence).replace("'", '"'), actor.get('username'), actor.get('role'), idempotency_key))
+        action_ref = f'NA-{int(datetime.utcnow().timestamp() * 1000) % 10_000_000}'
+        cur.execute(
+            """
+            INSERT INTO next_actions (
+                action_ref, customer_id, issue_id, action_type, title, description, priority, status,
+                owner_role, owner_name, due_at, rationale, evidence_json, created_by, created_by_role,
+                idempotency_key
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, 'Open',
+                %s, %s, %s, %s, %s::jsonb, %s, %s,
+                %s
+            )
+            """,
+            (
+                action_ref, customer_id, issue_id, action_type, title, description, priority,
+                role, actor.get('username'), due_at, 'Created via MCP create_next_action',
+                json.dumps(evidence or []), actor.get('username', ''), role, idempotency_key,
+            ),
+        )
+        conn.commit()
     return {'created': True, 'action_ref': action_ref, 'status': 'Open'}
 
 
-def update_next_action(actor: dict, action_ref: str, new_status: str, confirmation_token: str) -> dict:
-    if not confirmation_token:
-        return {'updated': False, 'reason': 'confirmation_token required'}
+def update_next_action(
+    actor: dict[str, Any],
+    action_ref: str,
+    new_status: str,
+    confirmation_token: str,
+) -> dict[str, Any]:
+    role = actor.get('role', '')
+    if new_status == 'Cancelled' and role != 'admin':
+        return {'updated': False, 'denied': True, 'reason': 'Only admin may cancel actions'}
+    if role not in ('support_user', 'admin'):
+        return {'updated': False, 'denied': True, 'reason': f'{role} cannot update actions'}
+    ok, reason = _verify_token(confirmation_token)
+    if not ok:
+        return {'updated': False, 'denied': True, 'reason': f'confirmation_token invalid: {reason}'}
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute('UPDATE next_actions SET status=%s, updated_at=now() WHERE action_ref=%s', (new_status, action_ref))
+        cur.execute(
+            'UPDATE next_actions SET status=%s, updated_at=now(), completed_at=CASE WHEN %s=\'Completed\' THEN now() ELSE completed_at END WHERE action_ref=%s RETURNING action_ref',
+            (new_status, new_status, action_ref),
+        )
+        row = cur.fetchone()
+        conn.commit()
+    if row is None:
+        return {'updated': False, 'denied': True, 'reason': f'action {action_ref} not found'}
     return {'updated': True, 'action_ref': action_ref, 'new_status': new_status}
 
 
-def update_issue_status(actor: dict, issue_ref: str, new_status: str, confirmation_token: str) -> dict:
-    if not confirmation_token:
-        return {'updated': False, 'reason': 'confirmation_token required'}
+def update_issue_status(
+    actor: dict[str, Any],
+    issue_ref: str,
+    new_status: str,
+    confirmation_token: str,
+) -> dict[str, Any]:
+    if new_status not in ALLOWED_ISSUE_STATUSES:
+        return {'updated': False, 'denied': True, 'reason': f'Unknown issue status: {new_status}'}
+    role = actor.get('role', '')
+    if role not in ('support_user', 'admin'):
+        return {'updated': False, 'denied': True, 'reason': f'{role} cannot update issue status'}
+    ok, reason = _verify_token(confirmation_token, expected_issue_ref=issue_ref)
+    if not ok:
+        return {'updated': False, 'denied': True, 'reason': f'confirmation_token invalid: {reason}'}
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute('UPDATE issues SET status=%s, updated_at=now() WHERE issue_ref=%s', (new_status, issue_ref))
+        cur.execute(
+            'UPDATE issues SET status=%s, updated_at=now() WHERE issue_ref=%s RETURNING issue_ref',
+            (new_status, issue_ref),
+        )
+        row = cur.fetchone()
+        conn.commit()
+    if row is None:
+        return {'updated': False, 'denied': True, 'reason': f'issue {issue_ref} not found'}
     return {'updated': True, 'issue_ref': issue_ref, 'new_status': new_status}

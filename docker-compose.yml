@@ -1,20 +1,21 @@
 services:
   app:
-    image: python:3.12-slim
+    build: .
     working_dir: /app
     volumes:
       - ./:/app
-    command: sh -c "pip install -e .[dev] && uvicorn acme_app.main:app --host 0.0.0.0 --port 8000"
+    command: uvicorn acme_app.main:app --host 0.0.0.0 --port 8000 --reload
     env_file:
       - .env.example
     ports:
       - "8000:8000"
     depends_on:
-      - postgres
-      - redis
-      - keycloak
-      - mcp-server
-      - otel-collector
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      mcp-server:
+        condition: service_started
 
   postgres:
     image: postgres:16
@@ -27,11 +28,16 @@ services:
     volumes:
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
       - ./infra/postgres/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U acme -d acme"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7
-    ports:
-      - "6379:6379"
+    expose:
+      - "6379"
 
   keycloak:
     image: quay.io/keycloak/keycloak:24.0
@@ -45,17 +51,19 @@ services:
       - ./infra/keycloak/acme-realm.json:/opt/keycloak/data/import/acme-realm.json:ro
 
   mcp-server:
-    image: python:3.12-slim
+    build: ./mcp_server
     working_dir: /app
     volumes:
       - ./mcp_server:/app
-    command: sh -c "pip install -e . && python -m acme_mcp.server"
     env_file:
       - .env.example
+    environment:
+      SYNC_DATABASE_URL: postgresql://acme:acme@postgres:5432/acme
     ports:
       - "8001:8001"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.106.1

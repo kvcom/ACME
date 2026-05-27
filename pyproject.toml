@@ -17,7 +17,11 @@ dependencies = [
   "jinja2>=3.1",
   "sse-starlette>=2.1",
   "opentelemetry-sdk>=1.25",
-  "opentelemetry-exporter-otlp>=1.25"
+  "opentelemetry-exporter-otlp>=1.25",
+  "opentelemetry-instrumentation-fastapi>=0.46b0",
+  "anthropic>=0.39",
+  "openai>=1.40",
+  "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -27,24 +31,45 @@ dev = [
   "ruff>=0.5",
   "black>=24.4",
   "mypy>=1.10",
-  "pre-commit>=3.7"
+  "pre-commit>=3.7",
 ]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
 
 [tool.black]
 line-length = 100
 
 [tool.ruff]
 line-length = 100
-
 target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B"]
+ignore = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
-strict = true
 warn_unused_configs = true
 
+[[tool.mypy.overrides]]
+module = "acme_app.domain.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "acme_app.policy.*"
+strict = true
+
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "mcp_server/src"]
+asyncio_mode = "auto"
+markers = [
+  "integration: requires Postgres / Redis / MCP / Keycloak to be running",
+]

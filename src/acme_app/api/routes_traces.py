@@ -1,22 +1,68 @@
-from fastapi import APIRouter
-from fastapi import Request
-from fastapi.responses import HTMLResponse
+"""Trace viewer routes.
 
-from acme_app.observability.decision_ledger import TRACE_EVENTS, get_events
+JSON endpoints power the UI table and the trace_detail page. The trace_detail
+view renders the Evidence-to-Action Decision Graph from trace_events sorted by
+created_at.
+"""
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from acme_app.auth.current_user import CurrentUser, get_current_user
+from acme_app.infrastructure.db import repositories as repo
+from acme_app.infrastructure.db.session import get_db_session
+
 
 router = APIRouter(prefix='/traces', tags=['traces'])
 
 
-@router.get('')
-async def traces() -> dict:
-    return {'items': [{'trace_ref': ref, 'event_count': len(events)} for ref, events in TRACE_EVENTS.items()]}
+@router.get('', response_class=HTMLResponse)
+async def traces_page(
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> HTMLResponse:
+    traces = await repo.list_traces(session, limit=100)
+    return request.app.state.templates.TemplateResponse(
+        request, 'traces.html', {'user': user, 'traces': traces},
+    )
 
 
-@router.get('/page', response_class=HTMLResponse)
-async def traces_page(request: Request) -> HTMLResponse:
-    return request.app.state.templates.TemplateResponse('traces.html', {'request': request})
+@router.get('/api')
+async def traces_api(
+    _user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    traces = await repo.list_traces(session, limit=100)
+    return {'items': traces}
 
 
 @router.get('/{trace_ref}', response_class=HTMLResponse)
-async def trace_detail(trace_ref: str, request: Request) -> HTMLResponse:
-    return request.app.state.templates.TemplateResponse('trace_detail.html', {'request': request, 'trace_ref': trace_ref, 'events': get_events(trace_ref)})
+async def trace_detail(
+    trace_ref: str,
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> HTMLResponse:
+    trace = await repo.get_trace(session, trace_ref)
+    if trace is None:
+        raise HTTPException(status_code=404, detail='Trace not found')
+    is_admin = 'admin' in user.roles
+    return request.app.state.templates.TemplateResponse(
+        request, 'trace_detail.html',
+        {'user': user, 'trace': trace, 'admin_reveal': is_admin},
+    )
+
+
+@router.get('/{trace_ref}/json')
+async def trace_json(
+    trace_ref: str,
+    _user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    trace = await repo.get_trace(session, trace_ref)
+    if trace is None:
+        raise HTTPException(status_code=404, detail='Trace not found')
+    return trace

@@ -1,1 +1,41 @@
-<!doctype html><html><head><meta charset='utf-8'/><title>Traces</title><link rel='stylesheet' href='/static/app.css'/></head><body><h1>Traces</h1></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Acme Operations · Traces</title>
+  <link rel="stylesheet" href="/static/app.css"/>
+</head>
+<body>
+<div class="page">
+  <h1>Decision traces</h1>
+  <p><a href="/chat">← Back to chat</a></p>
+  <table>
+    <thead>
+      <tr>
+        <th>Trace</th><th>User</th><th>Role</th><th>Intent</th><th>Status</th>
+        <th>Provider</th><th>Tokens</th><th>Cost (USD)</th><th>Latency (ms)</th><th>Created</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in traces %}
+      <tr onclick="location='/traces/{{ t.trace_ref }}'" style="cursor:pointer">
+        <td class="mono"><a href="/traces/{{ t.trace_ref }}">{{ t.trace_ref }}</a></td>
+        <td>{{ t.username }}</td>
+        <td><span class="role-badge">{{ t.role }}</span></td>
+        <td>{{ t.intent or '' }}</td>
+        <td><span class="badge badge-{{ (t.status or '')|lower|replace(' ','-') }}">{{ t.status }}</span></td>
+        <td>{{ t.provider }}</td>
+        <td class="mono">{{ t.total_tokens }}</td>
+        <td class="mono">${{ '%.4f' % t.cost_usd }}</td>
+        <td class="mono">{{ t.latency_ms }}</td>
+        <td class="mono">{{ t.created_at }}</td>
+      </tr>
+      {% endfor %}
+      {% if not traces %}
+      <tr><td colspan="10" style="color:var(--muted);text-align:center;padding:24px">No traces recorded yet. Send a message from /chat.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+</body>
+</html>

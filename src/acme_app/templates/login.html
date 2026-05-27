@@ -1,1 +1,35 @@
-<!doctype html><html><head><meta charset='utf-8'/><title>Login</title><link rel='stylesheet' href='/static/app.css'/></head><body><h1>Login</h1><p>Use Keycloak demo users.</p></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Acme Operations · Sign in</title>
+  <link rel="stylesheet" href="/static/app.css"/>
+</head>
+<body>
+  <div class="login-wrap">
+    <h1>Acme Operations</h1>
+    <p class="sub">Sign in to continue</p>
+    <form class="login-form" method="post" action="/login">
+      <label for="username">Username</label>
+      <input id="username" name="username" autocomplete="username" required/>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required/>
+      {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
+      <button class="primary" type="submit">Sign in</button>
+    </form>
+    <div class="login-quick">
+      <div class="section-label" style="margin-top:0">Demo users</div>
+      <button type="button" onclick="prefill('sarah.sales')">Sarah Sales <span class="role-badge">sales_user</span></button>
+      <button type="button" onclick="prefill('sam.support')">Sam Support <span class="role-badge">support_user</span></button>
+      <button type="button" onclick="prefill('admin.acme')">Admin Acme <span class="role-badge">admin</span></button>
+    </div>
+    <p class="login-note">Direct-grant Keycloak login is used for demo simplicity. Production would use Authorization Code with PKCE.</p>
+  </div>
+  <script>
+    function prefill(user) {
+      document.getElementById('username').value = user;
+      document.getElementById('password').value = 'password';
+    }
+  </script>
+</body>
+</html>

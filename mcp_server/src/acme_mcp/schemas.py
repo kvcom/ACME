@@ -1,5 +1,16 @@
-from pydantic import BaseModel, Field
+"""Re-exports of the MCP tool input schemas (handy for tests)."""
+from acme_mcp.server import (
+    Actor,
+    CreateActionInput,
+    CustomerProfileInput,
+    IssueRefInput,
+    OpenIssuesInput,
+    SearchCustomersInput,
+    UpdateActionInput,
+    UpdateIssueInput,
+)
 
-
-class CustomerSearchInput(BaseModel):
-    customer_name: str = Field(min_length=1, max_length=100)
+__all__ = [
+    'Actor', 'CreateActionInput', 'CustomerProfileInput', 'IssueRefInput',
+    'OpenIssuesInput', 'SearchCustomersInput', 'UpdateActionInput', 'UpdateIssueInput',
+]

@@ -1,25 +1,56 @@
 {
   "realm": "acme",
   "enabled": true,
+  "accessTokenLifespan": 3600,
+  "ssoSessionIdleTimeout": 3600,
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": false,
   "clients": [
     {
       "clientId": "acme-assistant",
       "publicClient": true,
       "directAccessGrantsEnabled": true,
       "standardFlowEnabled": true,
-      "redirectUris": ["http://localhost:8000/*"]
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:8000/*"],
+      "webOrigins": ["http://localhost:8000"],
+      "protocol": "openid-connect"
     }
   ],
   "roles": {
     "realm": [
-      {"name": "sales_user"},
-      {"name": "support_user"},
-      {"name": "admin"}
+      {"name": "sales_user", "description": "Read-only sales role"},
+      {"name": "support_user", "description": "Support role with proposed-confirmed writes"},
+      {"name": "admin", "description": "Admin role with full write access under confirmation"}
     ]
   },
   "users": [
-    {"username": "sarah.sales", "enabled": true, "credentials": [{"type":"password","value":"password","temporary": false}], "realmRoles": ["sales_user"]},
-    {"username": "sam.support", "enabled": true, "credentials": [{"type":"password","value":"password","temporary": false}], "realmRoles": ["support_user"]},
-    {"username": "admin.acme", "enabled": true, "credentials": [{"type":"password","value":"password","temporary": false}], "realmRoles": ["admin"]}
+    {
+      "username": "sarah.sales",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Sarah",
+      "lastName": "Sales",
+      "credentials": [{"type": "password", "value": "password", "temporary": false}],
+      "realmRoles": ["sales_user"]
+    },
+    {
+      "username": "sam.support",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Sam",
+      "lastName": "Support",
+      "credentials": [{"type": "password", "value": "password", "temporary": false}],
+      "realmRoles": ["support_user"]
+    },
+    {
+      "username": "admin.acme",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Admin",
+      "lastName": "Acme",
+      "credentials": [{"type": "password", "value": "password", "temporary": false}],
+      "realmRoles": ["admin"]
+    }
   ]
 }

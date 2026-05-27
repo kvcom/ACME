@@ -1,27 +1,132 @@
 <!doctype html>
-<html><head><meta charset='utf-8'/><title>Trace {{ trace_ref }}</title><link rel='stylesheet' href='/static/app.css'/></head>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Acme Operations · Trace {{ trace.trace_ref }}</title>
+  <link rel="stylesheet" href="/static/app.css"/>
+</head>
 <body>
-<h1>Trace {{ trace_ref }}</h1>
-<div class='trace-grid'>
-  <section>
-    <h2>Evidence-to-Action Decision Graph</h2>
-    <svg viewBox='0 0 800 1200' width='100%' height='600'>
-      <rect x='40' y='30' width='300' height='40' class='node'/><text x='55' y='55'>User Query</text>
-      <line x1='190' y1='70' x2='190' y2='130' class='edge'/>
-      <rect x='40' y='130' width='300' height='40' class='node'/><text x='55' y='155'>Adversarial Check</text>
-      <line x1='190' y1='170' x2='190' y2='230' class='edge'/>
-      <rect x='40' y='230' width='300' height='40' class='node'/><text x='55' y='255'>Agent Plan</text>
-      <line x1='190' y1='270' x2='190' y2='330' class='edge'/>
-      <rect x='40' y='330' width='300' height='40' class='node'/><text x='55' y='355'>Tools and Skills</text>
-      <line x1='190' y1='370' x2='190' y2='430' class='edge'/>
-      <rect x='40' y='430' width='300' height='40' class='node'/><text x='55' y='455'>RBAC Decision</text>
-      <line x1='190' y1='470' x2='190' y2='530' class='edge'/>
-      <rect x='40' y='530' width='300' height='40' class='node'/><text x='55' y='555'>Final Outcome</text>
-    </svg>
-  </section>
-  <section>
-    <h2>Events</h2>
-    <pre>{{ events }}</pre>
-  </section>
+<div class="page">
+  <p><a href="/traces">← All traces</a> · <a href="/chat">Chat</a></p>
+  <h1>{{ trace.trace_ref }}</h1>
+  <div class="trace-detail">
+    <div>
+      <div class="trace-section">
+        <h2>Summary</h2>
+        <div class="kv">
+          <div><span>User</span><span>{{ trace.username }} <span class="role-badge">{{ trace.role }}</span></span></div>
+          <div><span>Intent</span><span>{{ trace.detected_intent or 'n/a' }}</span></div>
+          <div><span>Status</span><span><span class="badge badge-{{ (trace.final_status or '')|lower|replace(' ','-') }}">{{ trace.final_status }}</span></span></div>
+          <div><span>Provider</span><span>{{ trace.provider }} / {{ trace.model }}</span></div>
+          <div><span>OTel trace</span><span class="mono">{{ trace.otel_trace_id or 'n/a' }}</span></div>
+          <div><span>Tokens</span><span>{{ trace.prompt_tokens }} in / {{ trace.completion_tokens }} out = {{ trace.total_tokens }}</span></div>
+          <div><span>Cost</span><span>${{ '%.4f' % trace.cost_usd }}</span></div>
+          <div><span>Latency</span><span>{{ trace.total_latency_ms }}ms (LLM {{ trace.llm_latency_ms or 0 }} / tools {{ trace.tool_latency_ms or 0 }})</span></div>
+          <div><span>Created</span><span class="mono">{{ trace.created_at }}</span></div>
+        </div>
+      </div>
+
+      <div class="trace-section">
+        <h2>Evidence-to-Action Decision Graph</h2>
+        <svg viewBox="0 0 720 620" width="100%" height="620" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" fill="#a8a29e"/>
+            </marker>
+          </defs>
+          {% set nodes = [
+            ('User Query', 60, 20, 'user-query'),
+            ('PII Redaction', 60, 80, 'pii'),
+            ('Adversarial Check', 60, 140, 'adversarial'),
+            ('Authenticated Role', 60, 200, 'auth'),
+            ('Agent Plan', 60, 260, 'agent_plan'),
+            ('MCP Tool Calls', 60, 320, 'tool_call'),
+            ('Skill Output', 60, 380, 'skill_invocation'),
+            ('Recommended Action', 60, 440, 'recommendation'),
+            ('RBAC Decision', 60, 500, 'rbac_decision'),
+            ('Propose → Confirm → Create', 60, 560, 'action_proposed'),
+          ] %}
+          {% for n in nodes %}
+          {% set has_event = false %}
+          {% set is_blocked = false %}
+          {% for ev in trace.events %}
+            {% if ev.event_type == n[3] %}{% set has_event = true %}{% endif %}
+            {% if ev.event_type == n[3] and ev.status == 'blocked' %}{% set is_blocked = true %}{% endif %}
+          {% endfor %}
+          <g>
+            <rect x="{{ n[1] }}" y="{{ n[2] }}" width="320" height="42" rx="6"
+                  class="graph-node {% if is_blocked %}graph-node-denied{% elif has_event %}graph-node-active{% endif %}"/>
+            <text x="{{ n[1] + 14 }}" y="{{ n[2] + 26 }}" class="graph-label">{{ n[0] }}</text>
+          </g>
+          {% if not loop.last %}
+          <line x1="{{ n[1] + 160 }}" y1="{{ n[2] + 42 }}" x2="{{ n[1] + 160 }}" y2="{{ n[2] + 60 }}" class="graph-edge"/>
+          {% endif %}
+          {% endfor %}
+
+          <g transform="translate(420, 100)">
+            <text x="0" y="0" class="graph-label" style="font-weight:500">Final outcome</text>
+            <rect x="0" y="20" width="260" height="120" class="graph-node graph-node-active" rx="6"/>
+            <text x="14" y="44" class="graph-label">{{ trace.final_status }}</text>
+            <text x="14" y="66" class="graph-label" style="fill:var(--muted)">Cost ${{ '%.4f' % trace.cost_usd }}</text>
+            <text x="14" y="86" class="graph-label" style="fill:var(--muted)">{{ trace.total_tokens }} tokens</text>
+            <text x="14" y="106" class="graph-label" style="fill:var(--muted)">{{ trace.total_latency_ms }}ms total</text>
+          </g>
+        </svg>
+      </div>
+
+      <div class="trace-section">
+        <h2>User query</h2>
+        <p class="mono">{{ trace.user_query_redacted }}</p>
+        {% if admin_reveal and trace.user_query != trace.user_query_redacted %}
+        <details>
+          <summary style="font-size:12px;color:var(--muted);cursor:pointer">Admin: reveal original</summary>
+          <p class="mono" style="margin-top:8px">{{ trace.user_query }}</p>
+        </details>
+        {% endif %}
+      </div>
+    </div>
+
+    <div>
+      <div class="trace-section">
+        <h2>Events ({{ trace.events|length }})</h2>
+        {% for ev in trace.events %}
+        <div class="event-row {% if ev.status == 'error' %}error{% endif %} {% if ev.status == 'blocked' %}blocked{% endif %}">
+          <span class="ev-type">{{ ev.event_type }}</span>
+          {{ ev.event_name }}{% if ev.latency_ms %} · {{ ev.latency_ms }}ms{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="trace-section">
+        <h2>Tool calls ({{ trace.tool_calls|length }})</h2>
+        {% for tc in trace.tool_calls %}
+        <div class="event-row {% if tc.status != 'ok' %}error{% endif %}">
+          <span class="ev-type">{{ tc.tool_name }}</span>
+          {{ tc.status }} · {{ tc.latency_ms }}ms
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="trace-section">
+        <h2>RBAC decisions ({{ trace.rbac_decisions|length }})</h2>
+        {% for r in trace.rbac_decisions %}
+        <div class="event-row {% if not r.allowed %}error{% endif %}">
+          <span class="ev-type">{{ r.role }}</span>
+          {{ r.operation }} on {{ r.resource }} →
+          {% if r.allowed %}allowed{% else %}denied — {{ r.reason }}{% endif %}
+        </div>
+        {% endfor %}
+        {% if not trace.rbac_decisions %}
+        <p style="font-size:12px;color:var(--muted);margin:0">No RBAC decisions recorded.</p>
+        {% endif %}
+      </div>
+
+      <div class="trace-section">
+        <h2>Final answer</h2>
+        <p>{{ trace.final_answer }}</p>
+      </div>
+    </div>
+  </div>
 </div>
-</body></html>
+</body>
+</html>

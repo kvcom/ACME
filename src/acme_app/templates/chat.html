@@ -1,36 +1,54 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-  <meta charset='utf-8'/>
-  <title>Acme Chat</title>
-  <link rel='stylesheet' href='/static/app.css'/>
+  <meta charset="utf-8"/>
+  <title>Acme Operations · Chat</title>
+  <link rel="stylesheet" href="/static/app.css"/>
 </head>
-<body>
-<div class='layout'>
-  <aside class='sidebar'>
-    <h2>Acme Operations</h2>
-    <p>{{ user.username }} · {{ user.roles[0] }}</p>
-    <label>LLM Provider</label>
-    <select id='provider'>
-      <option value='anthropic' {% if provider == 'anthropic' %}selected{% endif %}>Anthropic</option>
-      <option value='openai'>OpenAI</option>
-      <option value='ollama'>Ollama (stub)</option>
+<body data-conversation-ref="{{ conversation_ref }}">
+<div class="layout">
+  <aside class="sidebar">
+    <p class="brand">Acme Operations</p>
+    <p class="brand-sub">Assistant</p>
+    <div class="user-line">
+      <strong>{{ user.username }}</strong>
+      <span class="role-badge">{{ user.primary_role }}</span>
+    </div>
+    <div class="section-label">Conversations</div>
+    <ul class="conv-list" id="conv-list">
+      <li><div class="conv-title">Current</div><div class="conv-meta">{{ conversation_ref }}</div></li>
+    </ul>
+    <div class="section-label">LLM provider</div>
+    <select id="provider">
+      {% for p in providers %}
+      <option value="{{ p }}" {% if p == provider %}selected{% endif %}>{{ p }}</option>
+      {% endfor %}
     </select>
+    <div class="section-label">Links</div>
+    <ul class="conv-list">
+      <li><a href="/traces">Decision traces</a></li>
+      <li><a href="/eval">Evaluation results</a></li>
+      <li><form method="post" action="/logout" style="margin:0"><button class="ghost" style="width:100%;text-align:left" type="submit">Sign out</button></form></li>
+    </ul>
   </aside>
-  <main class='center'>
-    <h1>Chat</h1>
-    <div id='events' class='events'></div>
-    <div id='answer' class='answer'></div>
-    <input id='query' placeholder='Ask about customers, issues, and actions'/>
-    <button id='send'>Send</button>
+
+  <main class="center">
+    <div class="thread" id="thread"></div>
+    <div class="input-row">
+      <input id="query" placeholder="Ask about customers, issues, or actions. Try: 'Brief me on Northwind.'"/>
+      <button class="primary" id="send">Send</button>
+    </div>
   </main>
-  <aside class='right'>
-    <h3>Trace summary</h3>
-    <pre id='trace'></pre>
-    <h3>Proposed action</h3>
-    <pre id='proposed'></pre>
+
+  <aside class="right">
+    <h3>Evidence</h3>
+    <ul class="evidence-list" id="evidence-list"></ul>
+    <h3 style="margin-top:24px">Proposed action</h3>
+    <div id="proposed-card"></div>
+    <h3 style="margin-top:24px">Trace summary</h3>
+    <div class="trace-summary" id="trace-summary"></div>
   </aside>
 </div>
-<script src='/static/chat.js'></script>
+<script src="/static/chat.js"></script>
 </body>
 </html>

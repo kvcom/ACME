@@ -1,1 +1,28 @@
-<!doctype html><html><head><meta charset='utf-8'/><title>Conversations</title><link rel='stylesheet' href='/static/app.css'/></head><body><h1>Conversations</h1></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Acme Operations · Conversations</title>
+  <link rel="stylesheet" href="/static/app.css"/>
+</head>
+<body>
+<div class="page">
+  <h1>Conversations</h1>
+  <p><a href="/chat">← Back to chat</a></p>
+  <table>
+    <thead><tr><th>Conversation</th><th>Title</th><th>Preview</th><th>Messages</th><th>Last activity</th></tr></thead>
+    <tbody>
+      {% for c in conversations %}
+      <tr>
+        <td class="mono">{{ c.conversation_ref }}</td>
+        <td>{{ c.title or '' }}</td>
+        <td>{{ c.preview or '' }}</td>
+        <td>{{ c.message_count }}</td>
+        <td class="mono">{{ c.last_message_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+</body>
+</html>
