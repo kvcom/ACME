@@ -1,0 +1,23 @@
+:root {
+  --bg: #f6f7f8;
+  --surface: #ffffff;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --accent: #0f766e;
+  --ok: #15803d;
+  --warn: #b45309;
+  --danger: #b91c1c;
+  --radius: 10px;
+  --space-1: 8px;
+  --space-2: 12px;
+  --space-3: 16px;
+}
+body {font-family: Inter, Segoe UI, Arial, sans-serif; margin:0; background:var(--bg); color:var(--text)}
+.layout {display:grid; grid-template-columns: 260px 1fr 320px; gap:16px; padding:16px}
+.sidebar,.center,.right{background:var(--surface); border-radius:var(--radius); padding:16px}
+.events,.answer{border:1px solid #e5e7eb; border-radius:8px; min-height:120px; margin:8px 0; padding:8px; white-space:pre-wrap}
+input{width:80%; padding:8px}
+button{padding:8px 14px; background:var(--accent); color:white; border:none; border-radius:8px}
+.node{fill:#fff;stroke:#94a3b8;stroke-width:2}
+.edge{stroke:#64748b;stroke-width:2}
+.trace-grid{display:grid; grid-template-columns:60% 40%; gap:12px}

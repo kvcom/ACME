@@ -1,0 +1,25 @@
+{
+  "realm": "acme",
+  "enabled": true,
+  "clients": [
+    {
+      "clientId": "acme-assistant",
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "redirectUris": ["http://localhost:8000/*"]
+    }
+  ],
+  "roles": {
+    "realm": [
+      {"name": "sales_user"},
+      {"name": "support_user"},
+      {"name": "admin"}
+    ]
+  },
+  "users": [
+    {"username": "sarah.sales", "enabled": true, "credentials": [{"type":"password","value":"password","temporary": false}], "realmRoles": ["sales_user"]},
+    {"username": "sam.support", "enabled": true, "credentials": [{"type":"password","value":"password","temporary": false}], "realmRoles": ["support_user"]},
+    {"username": "admin.acme", "enabled": true, "credentials": [{"type":"password","value":"password","temporary": false}], "realmRoles": ["admin"]}
+  ]
+}

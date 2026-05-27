@@ -1,0 +1,66 @@
+services:
+  app:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: sh -c "pip install -e .[dev] && uvicorn acme_app.main:app --host 0.0.0.0 --port 8000"
+    env_file:
+      - .env.example
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+      - keycloak
+      - mcp-server
+      - otel-collector
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: acme
+      POSTGRES_USER: acme
+      POSTGRES_PASSWORD: acme
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./infra/postgres/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./infra/keycloak/acme-realm.json:/opt/keycloak/data/import/acme-realm.json:ro
+
+  mcp-server:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ./mcp_server:/app
+    command: sh -c "pip install -e . && python -m acme_mcp.server"
+    env_file:
+      - .env.example
+    ports:
+      - "8001:8001"
+    depends_on:
+      - postgres
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.106.1
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./infra/otel/collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4318:4318"

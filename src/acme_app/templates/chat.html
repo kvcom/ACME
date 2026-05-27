@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset='utf-8'/>
+  <title>Acme Chat</title>
+  <link rel='stylesheet' href='/static/app.css'/>
+</head>
+<body>
+<div class='layout'>
+  <aside class='sidebar'>
+    <h2>Acme Operations</h2>
+    <p>{{ user.username }} · {{ user.roles[0] }}</p>
+    <label>LLM Provider</label>
+    <select id='provider'>
+      <option value='anthropic' {% if provider == 'anthropic' %}selected{% endif %}>Anthropic</option>
+      <option value='openai'>OpenAI</option>
+      <option value='ollama'>Ollama (stub)</option>
+    </select>
+  </aside>
+  <main class='center'>
+    <h1>Chat</h1>
+    <div id='events' class='events'></div>
+    <div id='answer' class='answer'></div>
+    <input id='query' placeholder='Ask about customers, issues, and actions'/>
+    <button id='send'>Send</button>
+  </main>
+  <aside class='right'>
+    <h3>Trace summary</h3>
+    <pre id='trace'></pre>
+    <h3>Proposed action</h3>
+    <pre id='proposed'></pre>
+  </aside>
+</div>
+<script src='/static/chat.js'></script>
+</body>
+</html>
