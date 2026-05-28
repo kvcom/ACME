@@ -32,11 +32,14 @@ async def create_plan(query: str, provider_name: str, context: dict[str, Any]) -
         raw=response.raw,
     )
 
-    try:
-        payload = json.loads(response.text)
-    except json.JSONDecodeError:
-        payload = {'intent': 'unknown', 'steps': [], 'requires_clarification': True,
-                   'clarification_question': 'I could not understand the request.'}
+    if isinstance(response.raw, dict) and response.raw:
+        payload = response.raw
+    else:
+        try:
+            payload = json.loads(response.text)
+        except json.JSONDecodeError:
+            payload = {'intent': 'unknown', 'steps': [], 'requires_clarification': True,
+                       'clarification_question': 'I could not understand the request.'}
 
     # Some providers (notably Ollama with format=json) return explicit nulls for
     # fields the schema expects as strings. Coerce missing-or-null to defaults.
