@@ -88,6 +88,25 @@
   // ── Thread helpers ────────────────────────────────────────────────────
   function hideWelcome() { if (welcomeEl) welcomeEl.style.display = 'none'; }
 
+  let autoFollow = true;
+  let sending = false;
+
+  function nearThreadBottom(threshold = 140) {
+    return threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight < threshold;
+  }
+
+  function followThread(force = false) {
+    if (!force && !autoFollow) return;
+    requestAnimationFrame(() => {
+      threadEl.scrollTop = threadEl.scrollHeight;
+    });
+  }
+
+  threadEl.addEventListener('scroll', () => {
+    if (!sending) return;
+    autoFollow = nearThreadBottom();
+  }, {passive: true});
+
   function appendUserTurn(text) {
     const div = document.createElement('div');
     div.className = 'msg msg-user';
@@ -128,7 +147,7 @@
   }
 
   // Type out the answer character-by-character with a blinking caret.
-  function typewriter(el, text, speed = 12) {
+  function typewriter(el, text, speed = 12, onUpdate = null) {
     return new Promise(resolve => {
       el.textContent = '';
       const caret = document.createElement('span');
@@ -142,10 +161,14 @@
         }
         const ch = text[i++];
         const before = text.slice(0, i);
-        // Insert text node before caret so caret stays at the end.
-        caret.previousSibling
-          ? (caret.previousSibling.nodeValue = before)
-          : el.insertBefore(document.createTextNode(before), caret);
+        if (onUpdate) {
+          onUpdate(before, caret);
+        } else {
+          // Insert text node before caret so caret stays at the end.
+          caret.previousSibling
+            ? (caret.previousSibling.nodeValue = before)
+            : el.insertBefore(document.createTextNode(before), caret);
+        }
         // Briefly pause on sentence punctuation for a more natural cadence.
         const delay = /[.!?]/.test(ch) ? speed * 8
                     : /[,;:]/.test(ch) ? speed * 4
@@ -241,11 +264,14 @@
     const wrap = document.createElement('div');
     wrap.className = 'md-answer';
     answerRegion.appendChild(wrap);
-    const live = document.createElement('p');
-    wrap.appendChild(live);
-    await typewriter(live, r.answer || '', 12);
-    // Replace the plain text with rendered markdown when typing completes.
+    await typewriter(wrap, r.answer || '', 12, (partial, caret) => {
+      wrap.innerHTML = renderMarkdown(partial);
+      wrap.appendChild(caret);
+      followThread();
+    });
+    // Final render without the caret, using the complete normalised markdown.
     wrap.innerHTML = renderMarkdown(r.answer || '');
+    followThread();
   }
 
   function addStep(planEl, key, label, state) {
@@ -436,6 +462,8 @@
   function send() {
     const q = queryEl.value.trim();
     if (!q) return;
+    sending = true;
+    autoFollow = true;
     hideWelcome();
     appendUserTurn(q);
     queryEl.value = '';
@@ -461,41 +489,51 @@
       addStep(planEl, 'plan', `<b>Planning</b> · ${d.steps_count} step${d.steps_count===1?'':'s'} <small>· ${escape(d.intent)}</small>`, 'ok');
       // From here on, the LLM is at work composing the answer; show the dots.
       ensureComposing(planEl);
+      followThread(true);
     });
     es.addEventListener('tool_start', e => {
       const d = JSON.parse(e.data);
       addStep(planEl, 't-' + d.tool, `${escape(d.tool)} <small>· running</small>`, 'run');
+      followThread();
     });
     es.addEventListener('tool_complete', e => {
       const d = JSON.parse(e.data);
       addStep(planEl, 't-' + d.tool, `${escape(d.tool)} <small>· ${d.latency_ms}ms</small>`, 'ok');
+      followThread();
     });
     es.addEventListener('tool_error', e => {
       const d = JSON.parse(e.data);
       addStep(planEl, 't-' + d.tool, `${escape(d.tool)} <small>· ${escape(d.error)}</small>`, 'fail');
+      followThread();
     });
     es.addEventListener('tool_skipped', e => {
       const d = JSON.parse(e.data);
       addStep(planEl, 't-' + d.tool, `${escape(d.tool)} <small>· skipped · ${escape(d.reason)}</small>`, 'queued');
+      followThread();
     });
     es.addEventListener('skill_start', e => {
       const d = JSON.parse(e.data);
       addStep(planEl, 's-' + d.skill, `skill: ${escape(d.skill)} <small>· running</small>`, 'run');
+      followThread();
     });
     es.addEventListener('skill_complete', e => {
       const d = JSON.parse(e.data);
       addStep(planEl, 's-' + d.skill, `skill: ${escape(d.skill)} <small>· risk ${escape(d.risk_level || 'n/a')} · ${d.latency_ms}ms</small>`, 'ok');
+      followThread();
     });
     es.addEventListener('rbac_denied', e => {
       const d = JSON.parse(e.data);
       addStep(planEl, 'rbac', `policy.rbac_check <small>· denied · ${escape(d.reason)}</small>`, 'fail');
+      followThread();
     });
     es.addEventListener('proposed_action', () => {
       addStep(planEl, 'propose', `action.propose <small>· staged</small>`, 'ok');
+      followThread();
     });
     es.addEventListener('adversarial_block', e => {
       const d = JSON.parse(e.data);
       addStep(planEl, 'adv', `adversarial.check <small>· ${(d.flags || []).join(', ')}</small>`, 'fail');
+      followThread();
     });
 
     es.addEventListener('done', async e => {
@@ -514,6 +552,7 @@
         await renderAnswerTyped(answerRegion, r);
       }
       renderTraceMeta(answerRegion, r);
+      followThread();
 
       if (r.proposed_action) {
         renderProposedActionCard(r.proposed_action);
@@ -522,6 +561,7 @@
       }
 
       sendBtn.disabled = false;
+      sending = false;
       queryEl.focus();
       es.close();
     });
@@ -530,6 +570,7 @@
       clearInterval(tick);
       removeComposing(planEl);
       sendBtn.disabled = false;
+      sending = false;
       es.close();
     });
   }

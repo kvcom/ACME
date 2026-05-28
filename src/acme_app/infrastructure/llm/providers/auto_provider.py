@@ -81,6 +81,18 @@ def _construct(spec: ModelSpec) -> LLMProvider:
     return cls(model=spec.model)  # type: ignore[call-arg]
 
 
+def _looks_like_valid_plan(response: LLMResponse) -> bool:
+    payload = response.raw
+    if not isinstance(payload, dict):
+        return False
+    if not isinstance(payload.get('intent'), str) or not payload.get('intent'):
+        return False
+    steps = payload.get('steps', [])
+    if not isinstance(steps, list):
+        return False
+    return all(isinstance(step, dict) for step in steps)
+
+
 class AutoProvider(LLMProvider):
     name = 'auto'
 
@@ -109,6 +121,8 @@ class AutoProvider(LLMProvider):
                 # Treat empty text as a soft failure and try the next provider.
                 if not (response.text or '').strip():
                     raise RuntimeError(f'{spec.key} returned empty {op_name}')
+                if op_name == 'plan' and not _looks_like_valid_plan(response):
+                    raise RuntimeError(f'{spec.key} returned malformed plan JSON')
                 _log.info('Auto: %s succeeded with %s', op_name, spec.key)
                 return response
             except Exception as exc:
