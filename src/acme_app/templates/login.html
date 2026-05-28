@@ -75,7 +75,7 @@
     <div class="wordmark">ACME<span class="dot">·</span>OPS</div>
     <div class="tagline">Operations assistant</div>
 
-    <form method="post" action="/login">
+    <form method="post" action="/login{% if next %}?next={{ next }}{% endif %}">
       <div class="field">
         <label for="u">Username</label>
         <input id="u" name="username" type="text" placeholder="sarah.sales" autocomplete="username" required/>

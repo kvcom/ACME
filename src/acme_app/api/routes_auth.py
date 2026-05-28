@@ -6,7 +6,7 @@ Keycloak. Documented in DECISION_LOG D-005.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
@@ -30,8 +30,8 @@ class LoginInput(BaseModel):
 
 
 @router.get('/login', response_class=HTMLResponse)
-async def login_page(request: Request) -> HTMLResponse:
-    return request.app.state.templates.TemplateResponse(request, 'login.html', {'error': None})
+async def login_page(request: Request, next: str = Query(default='/chat')) -> HTMLResponse:
+    return request.app.state.templates.TemplateResponse(request, 'login.html', {'error': None, 'next': next})
 
 
 @router.post('/login')
@@ -39,14 +39,17 @@ async def login_form(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
+    next: str = Query(default='/chat'),
 ) -> HTMLResponse:
     user, error = await _resolve_login(username, password)
     if user is None:
         return request.app.state.templates.TemplateResponse(
-            request, 'login.html', {'error': error or 'Invalid credentials'}, status_code=401,
+            request, 'login.html', {'error': error or 'Invalid credentials', 'next': next}, status_code=401,
         )
-    response = RedirectResponse(url='/chat', status_code=303)
-    response.set_cookie('acme_session', _encode_session(user), httponly=True, samesite='lax', max_age=3600)
+    # 7 days. Demo-grade; production uses short access tokens + refresh rotation.
+    destination = next if next.startswith('/') else '/chat'
+    response = RedirectResponse(url=destination, status_code=303)
+    response.set_cookie('acme_session', _encode_session(user), httponly=True, samesite='lax', max_age=7 * 24 * 3600)
     return response
 
 
