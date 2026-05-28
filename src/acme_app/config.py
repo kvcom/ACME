@@ -9,8 +9,8 @@ class Settings(BaseSettings):
     )
 
     app_env: str = 'dev'
-    llm_provider: str = 'stub'
-    llm_model: str = 'stub-planner-v1'
+    llm_provider: str = 'auto'
+    llm_model: str = 'auto-router'
 
     anthropic_api_key: str = ''
     anthropic_model: str = 'claude-sonnet-4-20250514'

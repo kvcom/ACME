@@ -19,12 +19,14 @@ from sse_starlette.sse import EventSourceResponse
 
 from acme_app.api._view_helpers import badge_class_for, group_conversations
 from acme_app.application.orchestrator import run_agent
+from acme_app.application.propose_confirm import get_pending_action, stage_pending_action
 from acme_app.application.schemas import ChatResponse
 from acme_app.auth.current_user import CurrentUser, get_current_user
 from acme_app.config import settings
 from acme_app.infrastructure.db import repositories as repo
 from acme_app.infrastructure.db.session import get_db_session
-from acme_app.infrastructure.llm.model_registry import MODEL_REGISTRY, resolve
+from acme_app.infrastructure.llm.model_registry import MODEL_REGISTRY, resolve, visible_registry
+from acme_app.policy.action_guard import mint_confirmation_token
 
 router = APIRouter(prefix='/chat', tags=['chat'])
 
@@ -74,7 +76,37 @@ async def chat_page(
         except Exception:
             history = []
 
-    default_key = settings.llm_provider if settings.llm_provider in MODEL_REGISTRY else 'stub'
+    # Restore a stale-pending proposed action from PostgreSQL if Redis has
+    # expired since the user last saw the Confirm card. We re-mint a fresh
+    # HMAC token (same idempotency_key — a duplicate confirm still produces
+    # exactly one row) and stage it back into Redis so /actions/confirm just
+    # works as before.
+    pending_action: dict | None = None
+    try:
+        pending_action = await get_pending_action(conversation_ref)
+        if not pending_action:
+            recovered = await repo.get_latest_pending_proposal(session, conversation_ref)
+            if recovered:
+                import time as _time
+                recovered['confirmation_token'] = mint_confirmation_token(
+                    recovered.get('trace_ref', ''),
+                    recovered.get('action_type', ''),
+                    recovered.get('issue_ref', ''),
+                )
+                recovered['expires_at'] = int(_time.time()) + 600
+                await stage_pending_action(conversation_ref, recovered)
+                pending_action = recovered
+    except Exception:
+        pending_action = None
+
+    visible = visible_registry()
+    # Pick a sensible default for the UI: prefer the configured one if visible,
+    # otherwise the first visible model. Stub stays as the silent fallback in
+    # the backend but never shows as a peer choice in the dropdown.
+    if settings.llm_provider in visible:
+        default_key = settings.llm_provider
+    else:
+        default_key = next(iter(visible)) if visible else 'stub'
 
     return request.app.state.templates.TemplateResponse(
         request,
@@ -83,9 +115,10 @@ async def chat_page(
             'user': user,
             'default_model_key': default_key,
             'conversation_ref': active_ref,
-            'model_registry': MODEL_REGISTRY,
+            'model_registry': visible,
             'conversation_groups': groups,
             'history': history,
+            'pending_action': pending_action,
         },
     )
 

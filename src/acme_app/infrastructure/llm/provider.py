@@ -9,15 +9,15 @@ from __future__ import annotations
 
 from acme_app.infrastructure.llm.model_registry import MODEL_REGISTRY, ModelSpec, resolve
 from acme_app.infrastructure.llm.providers.anthropic_provider import AnthropicProvider
+from acme_app.infrastructure.llm.providers.auto_provider import AutoProvider
 from acme_app.infrastructure.llm.providers.base import LLMProvider
 from acme_app.infrastructure.llm.providers.google_provider import GoogleProvider
 from acme_app.infrastructure.llm.providers.ollama_provider import OllamaProvider
 from acme_app.infrastructure.llm.providers.openai_provider import OpenAIProvider
-from acme_app.infrastructure.llm.providers.stub_provider import StubProvider
 
 
 _FACTORIES = {
-    'stub': StubProvider,
+    'auto': AutoProvider,
     'anthropic': AnthropicProvider,
     'openai': OpenAIProvider,
     'google': GoogleProvider,
@@ -28,34 +28,28 @@ _CACHE: dict[str, LLMProvider] = {}
 
 
 def _construct(spec: ModelSpec) -> LLMProvider:
-    factory = _FACTORIES.get(spec.provider, StubProvider)
-    if spec.provider == 'stub':
+    factory = _FACTORIES[spec.provider]
+    if spec.provider == 'auto':
         return factory()
-    try:
-        return factory(model=spec.model)
-    except TypeError:
-        # Older constructor that doesn't accept a model arg.
-        inst = factory()
-        try:
-            inst.model = spec.model
-        except Exception:
-            pass
-        return inst
+    return factory(model=spec.model)
 
 
 def get_provider(model_key_or_provider: str | None = None) -> LLMProvider:
-    """Resolve a model_key (preferred) or legacy provider name to a provider instance."""
-    key = (model_key_or_provider or 'stub').lower()
-    # Legacy fallback: callers that still pass a bare provider name get the
-    # provider's default model.
+    """Resolve a model_key (preferred) or legacy provider name to a provider instance.
+
+    Returns AutoProvider for unknown keys or 'auto'. Real providers raise
+    RuntimeError at construction if their credentials are missing — Auto wraps
+    that into chain fallback; an explicit pick surfaces the error.
+    """
+    key = (model_key_or_provider or 'auto').lower()
+    # Legacy fallback: callers passing a bare provider name get its first model.
     if key in _FACTORIES and key not in MODEL_REGISTRY:
-        # Pick the first registry entry matching this provider.
-        for spec in MODEL_REGISTRY.values():
+        for k, spec in MODEL_REGISTRY.items():
             if spec.provider == key:
-                key = spec.key
+                key = k
                 break
         else:
-            key = 'stub'
+            key = 'auto'
     spec = resolve(key)
     cache_key = f'{spec.provider}:{spec.model}'
     if cache_key not in _CACHE:

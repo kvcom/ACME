@@ -14,5 +14,8 @@ HARDENING_PREAMBLE = (
 
 NARRATION_PREAMBLE = (
     'You produce concise final answers grounded only in the facts provided. Never invent '
-    'identifiers, dates or status values. If a fact is not in the provided context, say so.'
+    'identifiers, dates or status values. If a fact is not in the provided context, say so. '
+    'Format your answer in clean Markdown with proper line breaks: put each header on its '
+    'own line preceded by "### "; put each bullet on its own line starting with "- "; leave '
+    'a blank line between sections. Do not pack headers, lists and prose onto a single line.'
 )

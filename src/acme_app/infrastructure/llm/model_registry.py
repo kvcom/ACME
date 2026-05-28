@@ -5,8 +5,9 @@ Each entry maps a stable model_key (used as the API parameter) to:
   - provider     — which backend adapter to route through
   - model        — the provider-specific model identifier
   - label        — human-readable name for the UI
-  - badge        — short provider chip ("anthropic", "openai", "google", "local")
-  - input_per_1k / output_per_1k — USD cost per 1K tokens (0 for local + stub)
+  - badge        — short provider chip ("anthropic", "openai", "google", "local", "auto")
+  - input_per_1k / output_per_1k — USD cost per 1K tokens
+  - visible      — show in the UI dropdown (False = backend-only)
 
 When the user picks a model in the UI, the chat endpoint receives model_key
 and resolves it here. The orchestrator never sees provider names directly.
@@ -25,15 +26,18 @@ class ModelSpec:
     badge: str
     input_per_1k: float = 0.0
     output_per_1k: float = 0.0
+    visible: bool = True
 
 
 MODEL_REGISTRY: dict[str, ModelSpec] = {
-    'stub': ModelSpec(
-        key='stub', provider='stub', model='stub-planner-v1',
-        label='Stub planner', badge='deterministic',
+    # Auto — picks the best available model based on availability, cost and locality.
+    'auto': ModelSpec(
+        key='auto', provider='auto', model='auto-router',
+        label='Auto',
+        badge='smart',
     ),
 
-    # Anthropic — Claude family. Pricing as of mid-2026.
+    # Anthropic — Claude family.
     'claude-sonnet-4': ModelSpec(
         key='claude-sonnet-4', provider='anthropic', model='claude-sonnet-4-20250514',
         label='Claude Sonnet 4', badge='anthropic',
@@ -69,7 +73,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         input_per_1k=0.000075, output_per_1k=0.0003,
     ),
 
-    # Local — Ollama (no per-token cost). Models discovered from host Ollama.
+    # Local — Ollama (no per-token cost).
     'ollama-llama': ModelSpec(
         key='ollama-llama', provider='ollama', model='llama3.1:8b',
         label='Llama 3.1 8B (local)', badge='local',
@@ -82,15 +86,19 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
 
 
 def resolve(model_key: str | None) -> ModelSpec:
-    """Look up a model_key, falling back to the stub when unknown / None."""
+    """Look up a model_key, defaulting to Auto when unknown / None."""
     if not model_key:
-        return MODEL_REGISTRY['stub']
-    return MODEL_REGISTRY.get(model_key, MODEL_REGISTRY['stub'])
+        return MODEL_REGISTRY['auto']
+    return MODEL_REGISTRY.get(model_key, MODEL_REGISTRY['auto'])
 
 
 def default_key() -> str:
-    return 'stub'
+    return 'auto'
 
 
 def visible_keys() -> list[str]:
-    return list(MODEL_REGISTRY)
+    return [k for k, spec in MODEL_REGISTRY.items() if spec.visible]
+
+
+def visible_registry() -> dict[str, ModelSpec]:
+    return {k: spec for k, spec in MODEL_REGISTRY.items() if spec.visible}

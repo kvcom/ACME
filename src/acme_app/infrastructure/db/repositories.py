@@ -309,6 +309,40 @@ async def get_conversation_history(session: AsyncSession, conversation_ref: str)
     ]
 
 
+async def get_latest_pending_proposal(session: AsyncSession, conversation_ref: str) -> dict[str, Any] | None:
+    """Look up the most recent action_proposed in this conversation that has
+    not yet been turned into a row in next_actions (i.e. user never confirmed).
+
+    Returns the proposal payload (action_type, issue_ref, priority, title,
+    description, rationale, evidence, due_at, customer_*, idempotency_key,
+    trace_ref) without a confirmation_token — the caller mints a fresh one.
+    """
+    row = (await session.execute(text("""
+        SELECT e.payload, e.created_at, t.trace_ref
+        FROM trace_events e
+        JOIN agent_traces t ON t.id = e.trace_id
+        WHERE e.event_type = 'action_proposed'
+          AND t.conversation_id = (SELECT id FROM conversations WHERE conversation_ref = :r)
+        ORDER BY e.created_at DESC
+        LIMIT 1
+    """), {'r': conversation_ref})).first()
+    if row is None:
+        return None
+    payload = row[0]
+    if not isinstance(payload, dict):
+        return None
+    idem = payload.get('idempotency_key')
+    if idem:
+        existing = (await session.execute(
+            text('SELECT 1 FROM next_actions WHERE idempotency_key=:k'),
+            {'k': idem},
+        )).first()
+        if existing is not None:
+            return None  # already confirmed → not pending
+    payload.setdefault('trace_ref', row[2])
+    return payload
+
+
 async def db_counts(session: AsyncSession) -> dict[str, int]:
     tables = ['customers', 'issues', 'issue_updates', 'next_actions', 'conversations', 'agent_traces', 'trace_events', 'tool_call_logs', 'rbac_decisions', 'eval_runs', 'eval_results']
     out: dict[str, int] = {}

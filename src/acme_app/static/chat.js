@@ -156,10 +156,96 @@
     });
   }
 
+  // Some smaller local LLMs (Qwen 7B in particular) emit markdown markers
+  // inline without any line breaks: "...today: ### Open Issues: 1. **X** - ..."
+  // Normalise these into proper newline-anchored markdown before parsing.
+  function normaliseMarkdown(text) {
+    let t = String(text || '');
+    // Header markers (#### / ### / ## / #) preceded by inline text → push to new line.
+    t = t.replace(/([^\n])\s+(#{1,4}\s+[A-Z])/g, '$1\n\n$2');
+    // Bullet ("- " or "* ") preceded by inline text → push to new line.
+    t = t.replace(/([^\n])\s+([-*]\s+)(?=[A-Za-z*"`])/g, '$1\n$2');
+    // Numbered list item ("1. ", "2. " ...) preceded by inline text → new line.
+    t = t.replace(/([^\n])\s+(\d{1,2}\.\s+)(?=[A-Za-z*"`])/g, '$1\n$2');
+    // Hyphenated inline detail lists "- item - item" within a single bullet
+    // line shouldn't trigger; the lookahead on a capital letter/punct above
+    // already guards against most false positives.
+    // Collapse 3+ consecutive newlines.
+    t = t.replace(/\n{3,}/g, '\n\n');
+    return t;
+  }
+
+  // Minimal markdown → HTML for the bot answer. Handles headers (### / ## / #),
+  // **bold**, *italic*, `code`, bullet lists and numbered lists, paragraph
+  // breaks. We type the raw text first (so the caret animation is preserved),
+  // then swap to the rendered HTML when the typewriter finishes.
+  function renderMarkdown(text) {
+    const normalised = normaliseMarkdown(text);
+    let html = normalised.replace(/[&<>'"]/g, c => (
+      {'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]
+    ));
+    html = html.replace(/^####\s+(.+)$/gm, '<h5>$1</h5>')
+               .replace(/^###\s+(.+)$/gm, '<h4>$1</h4>')
+               .replace(/^##\s+(.+)$/gm, '<h3>$1</h3>')
+               .replace(/^#\s+(.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+    html = html.replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/(?<![*\w])\*([^*\n]+?)\*(?!\*)/g, '<em>$1</em>');
+    // Lists — handle "- " and numbered "1. " items.
+    html = html.replace(/^\s*[-*]\s+(.+)$/gm, '<li>$1</li>');
+    html = html.replace(/^\s*\d{1,2}\.\s+(.+)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>[\s\S]*?<\/li>(?:\n<li>[\s\S]*?<\/li>)*)/g,
+                        m => '<ul>' + m.replace(/\n/g, '') + '</ul>');
+    const blocks = html.split(/\n{2,}/).map(b => {
+      const trimmed = b.trim();
+      if (!trimmed) return '';
+      if (/^<(h\d|ul|ol|pre|blockquote)/.test(trimmed)) return trimmed;
+      return '<p>' + trimmed.replace(/\n/g, '<br>') + '</p>';
+    });
+    return blocks.join('');
+  }
+
+  // Render markdown on bot messages that were rendered server-side from
+  // conversation history (they bypass the typewriter / renderAnswerTyped path).
+  function renderHistoricalAnswers() {
+    threadEl.querySelectorAll('.msg-body-bot > p').forEach(p => {
+      if (p.closest('.md-answer')) return;            // already rendered
+      const raw = p.textContent;
+      if (!raw || !/[*#`\-]/.test(raw)) return;       // no markdown to render
+      const wrap = document.createElement('div');
+      wrap.className = 'md-answer';
+      wrap.innerHTML = renderMarkdown(raw);
+      p.replaceWith(wrap);
+    });
+  }
+  renderHistoricalAnswers();
+
+  // If the server restored a stale-pending proposed action from PostgreSQL,
+  // render the Confirm card on page load. The HMAC token has already been
+  // re-minted server-side and the proposal staged back into Redis, so the
+  // existing /actions/confirm path works without changes.
+  (function restorePendingAction() {
+    const raw = document.body.dataset.pendingAction;
+    if (!raw) return;
+    try {
+      const pa = JSON.parse(raw);
+      if (pa && pa.confirmation_token && pa.action_type) {
+        renderProposedActionCard(pa);
+      }
+    } catch (e) {
+      console.warn('[acme] failed to parse pending_action', e);
+    }
+  })();
+
   async function renderAnswerTyped(answerRegion, r) {
-    const p = document.createElement('p');
-    answerRegion.appendChild(p);
-    await typewriter(p, r.answer || '', 12);
+    const wrap = document.createElement('div');
+    wrap.className = 'md-answer';
+    answerRegion.appendChild(wrap);
+    const live = document.createElement('p');
+    wrap.appendChild(live);
+    await typewriter(live, r.answer || '', 12);
+    // Replace the plain text with rendered markdown when typing completes.
+    wrap.innerHTML = renderMarkdown(r.answer || '');
   }
 
   function addStep(planEl, key, label, state) {
@@ -387,6 +473,10 @@
     es.addEventListener('tool_error', e => {
       const d = JSON.parse(e.data);
       addStep(planEl, 't-' + d.tool, `${escape(d.tool)} <small>· ${escape(d.error)}</small>`, 'fail');
+    });
+    es.addEventListener('tool_skipped', e => {
+      const d = JSON.parse(e.data);
+      addStep(planEl, 't-' + d.tool, `${escape(d.tool)} <small>· skipped · ${escape(d.reason)}</small>`, 'queued');
     });
     es.addEventListener('skill_start', e => {
       const d = JSON.parse(e.data);

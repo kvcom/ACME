@@ -53,6 +53,24 @@ def validate_step(step_type: str, name: str) -> tuple[bool, str]:
     return True, 'ok'
 
 
+_ISSUE_REF_RE = re.compile(r'^ISS-\d{3,5}$', re.I)
+
+# Per-tool required-argument contracts. The orchestrator skips a plan step
+# whose arguments don't satisfy these, so a confused LLM never reaches the
+# MCP server with garbage and produces a visible 400 in the trace.
+_TOOL_REQUIRED_ARGS: dict[str, tuple[str, ...]] = {
+    'search_customers':        ('customer_name',),
+    'get_customer_profile':    ('customer_name',),
+    'get_open_issues':         ('customer_name',),   # also accepts customer_id
+    'summarise_issue_history': ('issue_ref',),
+    'recommend_next_action':   ('issue_ref',),
+}
+_SKILL_REQUIRED_ARGS: dict[str, tuple[str, ...]] = {
+    'customer_escalation_summary': ('customer_name',),
+    'closure_readiness_check':     ('issue_ref',),
+}
+
+
 def validate_step_arguments(name: str, args: dict[str, Any]) -> tuple[bool, str]:
     if not isinstance(args, dict):
         return False, 'arguments must be an object'
@@ -62,4 +80,25 @@ def validate_step_arguments(name: str, args: dict[str, Any]) -> tuple[bool, str]
     if name == 'create_next_action':
         if args.get('action_type') and args['action_type'] not in ALLOWED_ACTION_TYPES:
             return False, f'action_type not in catalogue: {args.get("action_type")}'
+        return True, 'ok'
+
+    # Required-field gate: smaller local LLMs sometimes invoke tools with the
+    # arguments of an entirely different tool (e.g. summarise_issue_history with
+    # customer_name). Catch that here, not at the MCP layer.
+    required = _TOOL_REQUIRED_ARGS.get(name) or _SKILL_REQUIRED_ARGS.get(name)
+    if required:
+        # get_open_issues uniquely accepts either customer_name OR customer_id.
+        if name == 'get_open_issues':
+            if not (args.get('customer_name') or args.get('customer_id')):
+                return False, 'get_open_issues requires customer_name or customer_id'
+        else:
+            missing = [k for k in required if not args.get(k)]
+            if missing:
+                return False, f'{name} missing required argument(s): {", ".join(missing)}'
+
+    # Shape check for issue_ref: must look like ISS-NNN.
+    issue_ref = args.get('issue_ref')
+    if issue_ref and not _ISSUE_REF_RE.match(str(issue_ref)):
+        return False, f'issue_ref must look like ISS-NNN (got "{issue_ref}")'
+
     return True, 'ok'

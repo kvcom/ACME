@@ -1,7 +1,7 @@
 """Per-model USD pricing.
 
 Single source of truth lives in MODEL_REGISTRY — this module just adapts it
-to a callable shape that the orchestrator already uses.
+to a callable shape that the orchestrator uses.
 """
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ def estimate_cost(model_key: str, prompt_tokens: int, completion_tokens: int) ->
     return round(cost, 6)
 
 
-# Legacy compatibility dict so existing imports (PRICING['anthropic']) still work.
+# Compatibility dict for any callers still indexing by provider name.
 PRICING = {
-    'stub': {'input_per_1k': 0.0, 'output_per_1k': 0.0},
+    'auto': {'input_per_1k': 0.0, 'output_per_1k': 0.0},
     'anthropic': {'input_per_1k': 0.003, 'output_per_1k': 0.015},
     'openai': {'input_per_1k': 0.0025, 'output_per_1k': 0.01},
     'google': {'input_per_1k': 0.00125, 'output_per_1k': 0.005},

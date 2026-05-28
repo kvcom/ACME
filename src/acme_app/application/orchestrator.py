@@ -4,7 +4,7 @@ The execution loop in section 12.3 of the plan, condensed:
 
   1. adversarial check (length + patterns)
   2. PII redaction
-  3. Redis context load
+  3. Redis context load (with PostgreSQL fallback when Redis has expired)
   4. LLM plan
   5. Validate plan; reject unknown tools/skills/action_types
   6. Execute tool steps via MCP; record tool_call_logs
@@ -20,6 +20,7 @@ used by the SSE endpoint. When event_sink is None (eval, tests) it is a no-op.
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -49,6 +50,63 @@ from acme_app.skills.registry import SKILLS
 
 _log = logging.getLogger(__name__)
 EventSink = Callable[[str, dict[str, Any]], Awaitable[None]] | None
+
+# Customers we know about, used to recover a "last customer in scope" hint when
+# Redis has expired and we're rebuilding context from the durable PG history.
+_KNOWN_CUSTOMERS = (
+    'Northwind Energy', 'Contoso Retail',
+    'Acme Logistics Europe', 'Acme Manufacturing Group',
+    'BlueRiver Health', 'Skyline Aviation',
+)
+_ISSUE_REF_RE = re.compile(r'\bISS-\d{3,5}\b', re.I)
+
+
+async def _load_recent_turns_with_pg_fallback(
+    session: AsyncSession,
+    username: str,
+    conversation_ref: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None, str | None]:
+    """Get recent turns + best-effort (last_customer, last_issue).
+
+    Redis is the fast path. If it has expired (TTL 30 min) we recover from
+    PostgreSQL — agent_traces is the durable record. We also write what we
+    find back into Redis so the next turn in this conversation skips the
+    PG roundtrip again.
+    """
+    turns = await conversation_memory.get_context(username, conversation_ref)
+    last_customer = await conversation_memory.get_last_customer(username, conversation_ref)
+    last_issue = await conversation_memory.get_last_issue(username, conversation_ref)
+
+    if not turns:
+        pg_history = await repo.get_conversation_history(session, conversation_ref)
+        if pg_history:
+            for h in pg_history[-3:]:
+                turns.append({'role': 'user', 'text': h.get('user_query') or ''})
+                turns.append({'role': 'assistant',
+                              'text': h.get('answer') or '',
+                              'trace_ref': h.get('trace_ref')})
+            # Backfill Redis so subsequent turns within this session are fast.
+            for turn in turns:
+                await conversation_memory.append_context(username, conversation_ref, turn)
+
+    if (not last_customer or not last_issue) and turns:
+        for turn in reversed(turns):
+            text = turn.get('text') or ''
+            if not last_issue:
+                m = _ISSUE_REF_RE.search(text)
+                if m:
+                    last_issue = m.group(0).upper()
+                    await conversation_memory.set_last_issue(username, conversation_ref, last_issue)
+            if not last_customer:
+                for c in _KNOWN_CUSTOMERS:
+                    if c.lower() in text.lower():
+                        last_customer = {'name': c}
+                        await conversation_memory.set_last_customer(username, conversation_ref, last_customer)
+                        break
+            if last_customer and last_issue:
+                break
+
+    return turns, last_customer, last_issue
 
 
 def _new_trace_ref() -> str:
@@ -108,17 +166,61 @@ async def run_agent(
                 intent='blocked_length', started_ms=started_ms,
             )
 
-        last_customer = await conversation_memory.get_last_customer(username, conversation_ref) or None
-        last_issue = await conversation_memory.get_last_issue(username, conversation_ref) or None
-        if (await get_pending_action(conversation_ref)):
+        recent_turns, last_customer, last_issue = await _load_recent_turns_with_pg_fallback(
+            session, username, conversation_ref,
+        )
+        pending = await get_pending_action(conversation_ref)
+        if pending:
             ledger.event('memory', 'redis.pending_action_present', {'present': True})
+        if recent_turns:
+            ledger.event('memory', 'history.loaded',
+                         {'turns': len(recent_turns),
+                          'last_customer': (last_customer or {}).get('name'),
+                          'last_issue': last_issue})
+
+        # Build a transcript snippet for the LLM so short follow-ups ("yes",
+        # "that one", pronouns) resolve against the actual previous turn.
+        history_text = ''
+        if recent_turns:
+            lines = []
+            for turn in recent_turns[-6:]:
+                who = 'User' if turn.get('role') == 'user' else 'Assistant'
+                txt = (turn.get('text') or '').strip().replace('\n', ' ')
+                if txt:
+                    lines.append(f'{who}: {txt[:300]}')
+            if lines:
+                history_text = 'Recent conversation:\n' + '\n'.join(lines) + '\n\n'
+        if last_customer and last_customer.get('name'):
+            history_text += f'Last customer in scope: {last_customer["name"]}\n'
+        if last_issue:
+            history_text += f'Last issue in scope: {last_issue}\n'
+        if pending:
+            history_text += (
+                f'There is a pending proposed action awaiting user confirmation: '
+                f'{pending.get("action_type")} on {pending.get("issue_ref")}.\n'
+            )
+        enriched_query = (history_text + '\nCurrent message:\n' + query) if history_text else query
 
         with tracer.start_as_current_span('agent.plan'):
-            plan, llm_plan_response = await create_plan(
-                query, provider_name,
-                context={'role': role, 'last_customer': (last_customer or {}).get('name') if last_customer else None,
-                         'last_issue': last_issue},
-            )
+            try:
+                plan, llm_plan_response = await create_plan(
+                    enriched_query, provider_name,
+                    context={'role': role, 'last_customer': (last_customer or {}).get('name') if last_customer else None,
+                             'last_issue': last_issue},
+                )
+            except Exception as exc:
+                ledger.event('error', 'llm.unavailable', {'error': str(exc)}, status='error')
+                await _emit(event_sink, 'llm_unavailable', {'error': str(exc)})
+                return await _finalise_blocked(
+                    session, ledger, query, query_redacted, provider_name,
+                    conversation_ref, badge='LLM Unavailable',
+                    answer=(
+                        "I couldn't reach any LLM. Please configure ANTHROPIC_API_KEY, "
+                        "OPENAI_API_KEY, or GOOGLE_API_KEY in .env, or start a local "
+                        "Ollama server. Detail: " + str(exc)[:200]
+                    ),
+                    intent='llm_unavailable', started_ms=started_ms,
+                )
         ledger.event('agent_plan', 'plan.created',
                      {'intent': plan.intent, 'steps': len(plan.steps), 'write_requested': plan.write_requested,
                       'narration_kind': plan.narration_kind})
@@ -140,13 +242,40 @@ async def run_agent(
 
         confirm_pending = plan.intent == 'confirm_pending_action'
         if confirm_pending:
-            return await _confirm_pending(
-                session=session, ledger=ledger, mcp=mcp,
-                username=username, role=role, conversation_ref=conversation_ref,
-                query=query, query_redacted=query_redacted,
-                provider_name=provider_name, llm_plan_response=llm_plan_response,
-                started_ms=started_ms, event_sink=event_sink,
+            # Sanity gate: a confirm intent only makes sense when there's
+            # actually a pending action AND the user's message reads like a
+            # bare affirmation. Smaller models occasionally fire confirm
+            # spuriously on long questions; catch that and demote to a normal
+            # plan so we still answer the user usefully.
+            short_affirmations = {
+                'yes', 'yeah', 'yep', 'sure', 'ok', 'okay', 'confirm',
+                'go ahead', 'do it', 'approve', 'create it', 'create',
+                'proceed', 'please confirm',
+            }
+            normalised = query.strip().lower().rstrip('.!')
+            looks_like_confirm = (
+                normalised in short_affirmations
+                or normalised.startswith('confirm')
+                or normalised.startswith('yes ')
+                or len(normalised.split()) <= 3
             )
+            looks_like_confirm = looks_like_confirm and ('?' not in query)
+            if pending and looks_like_confirm:
+                return await _confirm_pending(
+                    session=session, ledger=ledger, mcp=mcp,
+                    username=username, role=role, conversation_ref=conversation_ref,
+                    query=query, query_redacted=query_redacted,
+                    provider_name=provider_name, llm_plan_response=llm_plan_response,
+                    started_ms=started_ms, event_sink=event_sink,
+                )
+            # Misrouted confirm: demote to a normal plan and continue with
+            # whatever steps the LLM produced (or none — narration still runs).
+            ledger.event('agent_plan', 'confirm_intent.demoted',
+                         {'pending_present': bool(pending),
+                          'message_chars': len(query),
+                          'reason': 'no pending or message is not a bare affirmation'})
+            plan.intent = 'demoted_confirm'
+            plan.requires_clarification = False
 
         facts: dict[str, Any] = {'plan': plan.model_dump()}
         tools_called: list[str] = []
@@ -158,8 +287,14 @@ async def run_agent(
             ok_s, why_s = validate_step(step.step_type, step.name)
             ok_a, why_a = validate_step_arguments(step.name, step.arguments)
             if not ok_s or not ok_a:
+                reason = why_s if not ok_s else why_a
                 ledger.event('error', f'plan.step.rejected.{step.name}',
-                             {'reason': why_s if not ok_s else why_a}, status='error')
+                             {'reason': reason}, status='error')
+                # Surface in the streaming UI as a soft "skipped" entry so the
+                # user can see the LLM tried something we couldn't run, instead
+                # of a step silently vanishing from the plan card.
+                await _emit(event_sink, 'tool_skipped',
+                            {'tool': step.name, 'reason': reason})
                 continue
 
             if step.step_type == 'tool':
@@ -179,8 +314,8 @@ async def run_agent(
                                      {'keys': list(output.keys())[:8]}, latency_ms=latency)
                         await _emit(event_sink, 'tool_complete',
                                     {'tool': step.name, 'summary': _summarise(output), 'latency_ms': latency})
-                        _ingest_tool_output(step.name, output, facts, cumulative_evidence,
-                                            username, conversation_ref)
+                        await _ingest_tool_output(step.name, output, facts, cumulative_evidence,
+                                                   username, conversation_ref)
                     except MCPClientError as exc:
                         latency = int((time.perf_counter() - start_t) * 1000)
                         ledger.tool(step.name, step.arguments, {'error': str(exc)}, 'error', latency, str(exc))
@@ -216,7 +351,21 @@ async def run_agent(
             )
 
         narration_provider = get_provider(provider_name)
-        narration_response = await narration_provider.narrate(NARRATION_PREAMBLE, query, facts)
+        # Narration also sees the history so short follow-ups produce coherent
+        # answers ("yes" → "OK, here's the briefing on Northwind").
+        facts['conversation_history'] = history_text or None
+        try:
+            narration_response = await narration_provider.narrate(NARRATION_PREAMBLE, enriched_query, facts)
+        except Exception as exc:
+            ledger.event('error', 'llm.narrate.unavailable', {'error': str(exc)}, status='error')
+            # Soft-fall back to a templated answer so the user still sees something useful.
+            from acme_app.infrastructure.llm.providers.base import LLMResponse
+            narration_response = LLMResponse(
+                text=(plan.clarification_question
+                      or 'The LLM did not return an answer. The trace records the tool results.'),
+                prompt_tokens=0, completion_tokens=0, latency_ms=0,
+                model=llm_plan_response.model,
+            )
         ledger.event('final_response', 'narration.complete',
                      {'model': narration_response.model, 'len': len(narration_response.text)},
                      latency_ms=narration_response.latency_ms)
@@ -300,7 +449,7 @@ async def run_agent(
         )
 
 
-def _ingest_tool_output(
+async def _ingest_tool_output(
     tool_name: str,
     output: dict[str, Any],
     facts: dict[str, Any],
@@ -308,23 +457,40 @@ def _ingest_tool_output(
     username: str,
     conversation_ref: str,
 ) -> None:
+    """Routes a tool's result into the facts dict + Redis short-term memory.
+
+    The Redis writes (set_last_customer / set_last_issue) are what make
+    follow-up references like "that customer" or "that issue" resolve on the
+    next turn.
+    """
     if tool_name == 'get_customer_profile':
         facts['customer_profile'] = output
-        if 'name' in output:
+        if output.get('name'):
             cumulative_evidence.append(f'customer:{output.get("customer_id", output.get("name"))}')
+            await conversation_memory.set_last_customer(username, conversation_ref, output)
     elif tool_name == 'get_open_issues':
         facts['open_issues'] = output.get('issues', [])
         for issue in output.get('issues', []):
             cumulative_evidence.append(f'issue:{issue.get("issue_ref")}')
+        # Remember the first (highest-priority) open issue for follow-up refs.
+        issues = output.get('issues') or []
+        if issues and issues[0].get('issue_ref'):
+            await conversation_memory.set_last_issue(username, conversation_ref, issues[0]['issue_ref'])
     elif tool_name == 'summarise_issue_history':
         facts['issue_history'] = output
         cumulative_evidence.extend(output.get('evidence', []))
         facts.setdefault('all_updates', []).extend(output.get('updates', []))
+        if output.get('issue_ref'):
+            await conversation_memory.set_last_issue(username, conversation_ref, output['issue_ref'])
     elif tool_name == 'recommend_next_action':
         facts['recommendation'] = output
         cumulative_evidence.extend(output.get('evidence', []))
     elif tool_name == 'search_customers':
         facts['matches'] = output.get('matches', [])
+        matches = output.get('matches') or []
+        if len(matches) == 1 and matches[0].get('name'):
+            # Unambiguous match — remember it.
+            await conversation_memory.set_last_customer(username, conversation_ref, matches[0])
 
 
 def _invoke_skill(
@@ -392,8 +558,10 @@ async def _maybe_propose(
         recommendation=recommendation,
     )
     await stage_pending_action(conversation_ref, proposed)
+    # Persist the full proposal payload (minus the token, which is short-lived)
+    # so we can rebuild the Confirm card from PG when Redis has expired.
     ledger.event('action_proposed', 'action.proposed',
-                 {'action_type': action_type, 'issue_ref': issue_ref, 'priority': proposed.get('priority')})
+                 {k: v for k, v in proposed.items() if k != 'confirmation_token'})
     await _emit(event_sink, 'proposed_action',
                 {'action_type': action_type, 'issue_ref': issue_ref, 'priority': proposed.get('priority'),
                  'title': proposed.get('title'), 'confirmation_token': proposed.get('confirmation_token')})
