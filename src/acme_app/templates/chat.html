@@ -7,19 +7,20 @@
   <style>
     .workspace { grid-template-columns: 280px 1fr 320px; }
 
-    /* Thread becomes a flex column where the composer is pinned to the bottom
-       even when the welcome state is short. */
+    /* Thread: centered column — user bubbles right, bot left, same width */
     .thread {
       display: flex; flex-direction: column;
+      align-items: center;
       padding: 0 !important;
     }
-    .thread > .welcome { flex: 1 0 auto; }
-    .thread > .msg:first-of-type { margin-top: 24px; padding: 0 32px; }
-    .thread > .msg { padding: 0 32px; }
+    .thread > .welcome { flex: 1 0 auto; width: 100%; max-width: var(--thread-max-width); }
+    .thread > .msg:first-of-type { margin-top: 24px; }
+    .thread > .msg { width: 100%; max-width: var(--thread-max-width); }
     .thread > .composer {
       position: sticky; bottom: 0;
-      margin-top: auto;          /* push to bottom when content is short */
-      padding: 16px 32px 22px;
+      width: 100%; max-width: var(--thread-max-width);
+      margin-top: auto;
+      padding: 16px 0 22px;
       background: linear-gradient(to top, var(--bg-base) 75%, transparent);
     }
 
@@ -124,11 +125,11 @@
 
     /* ── Welcome state ────────────────────────────────────────────────── */
     .welcome {
-      width: 100%; max-width: 740px;
+      width: 100%;
       margin: 0 auto;
       display: flex; flex-direction: column;
       justify-content: center;
-      padding: 4vh 32px 32px;
+      padding: 4vh 0 32px;
     }
     .welcome-brand {
       font-family: var(--font-mono); font-size: 22px; font-weight: 500;
@@ -182,8 +183,9 @@
       width: 5px; height: 5px; border-radius: 50%; background: var(--accent);
       box-shadow: 0 0 6px var(--accent-glow);
     }
+    .composer { position: relative; }
     .provider-pop {
-      position: absolute; bottom: 56px; left: 32px;
+      position: absolute; bottom: 56px; left: 0;
       background: var(--bg-base); border: 1px solid var(--border-medium);
       border-radius: var(--radius-md); padding: 4px; z-index: 20;
       box-shadow: 0 8px 24px rgba(0,0,0,0.5);
@@ -279,6 +281,22 @@
       </div>
       <div class="msg msg-bot">
         <div class="msg-body-bot">
+          {% if turn.plan_steps %}
+          <div class="plan-quiet">
+            <div class="ph">
+              <span><b>Planning</b>{% if turn.intent %} · <span class="dim">{{ turn.intent }}</span>{% endif %}</span>
+              <span class="dim">{{ '%.1f' % (turn.latency_ms / 1000) }}s · {{ turn.total_tokens }} tok · ${{ '%.4f' % turn.cost_usd }}</span>
+            </div>
+            <div class="ps">
+              {% for step in turn.plan_steps %}
+              <div class="pl {{ step.state }}">
+                <span class="pi">{% if step.state == 'ok' %}✓{% elif step.state == 'fail' %}×{% else %}○{% endif %}</span>
+                <span>{% if step.kind == 'planning' %}<b>Planning</b>{% if step.step_count is not none %} · {{ step.step_count }} step{{ '' if step.step_count == 1 else 's' }}{% endif %}{% if step.intent %} <small>· {{ step.intent }}</small>{% endif %}{% if step.reason %} <small>· {{ step.reason }}</small>{% endif %}{% else %}{{ step.label }}{% if step.risk_level %} <small>· risk {{ step.risk_level }}</small>{% endif %}{% if step.latency_ms is not none %} <small>· {{ step.latency_ms }}ms</small>{% endif %}{% if step.reason %} <small>· {{ step.reason }}</small>{% endif %}{% endif %}</span>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
           <p>{{ turn.answer }}</p>
           <div class="trace-meta">
             <span class="badge badge-{{ turn.badge_class }}">{{ turn.badge }}</span>

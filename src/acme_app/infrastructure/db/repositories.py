@@ -303,30 +303,124 @@ async def soft_delete_conversation(
 async def get_conversation_history(session: AsyncSession, conversation_ref: str) -> list[dict[str, Any]]:
     """Return the full message history for a conversation_ref, ordered oldest→newest.
 
-    Each row is a (user_query, final_answer) pair plus trace metadata, ready to
-    render as an alternating sequence of user / assistant bubbles.
+    Each row is a (user_query, final_answer) pair plus trace metadata and a
+    pre-built list of plan steps (rebuilt from trace_events) so the historical
+    view can show the same planning card the live SSE stream showed at the
+    time of the turn.
     """
     rows = (await session.execute(text("""
-        SELECT user_query_redacted, final_answer, trace_ref, final_status,
-               estimated_cost_usd, total_tokens, total_latency_ms, llm_provider, created_at
-        FROM agent_traces
-        WHERE conversation_id = (SELECT id FROM conversations WHERE conversation_ref = :ref)
-        ORDER BY created_at ASC
+        SELECT t.id, t.user_query_redacted, t.final_answer, t.trace_ref, t.final_status,
+               t.estimated_cost_usd, t.total_tokens, t.total_latency_ms, t.llm_provider,
+               t.created_at, t.detected_intent
+        FROM agent_traces t
+        WHERE t.conversation_id = (SELECT id FROM conversations WHERE conversation_ref = :ref)
+        ORDER BY t.created_at ASC
     """), {'ref': conversation_ref})).all()
-    return [
-        {
-            'user_query': r[0],
-            'answer': r[1] or '',
-            'trace_ref': r[2],
-            'badge': r[3],
-            'cost_usd': float(r[4] or 0),
-            'total_tokens': r[5] or 0,
-            'latency_ms': r[6] or 0,
-            'provider': r[7],
-            'created_at': r[8].isoformat() if r[8] else None,
-        }
-        for r in rows
-    ]
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        trace_id = r[0]
+        events = (await session.execute(text("""
+            SELECT event_type, event_name, payload, latency_ms, status
+            FROM trace_events
+            WHERE trace_id = :t
+            ORDER BY created_at ASC
+        """), {'t': trace_id})).all()
+        plan_steps = _events_to_plan_steps([
+            {'event_type': e[0], 'event_name': e[1], 'payload': e[2] or {},
+             'latency_ms': e[3], 'status': e[4]}
+            for e in events
+        ])
+        out.append({
+            'user_query': r[1],
+            'answer': r[2] or '',
+            'trace_ref': r[3],
+            'badge': r[4],
+            'cost_usd': float(r[5] or 0),
+            'total_tokens': r[6] or 0,
+            'latency_ms': r[7] or 0,
+            'provider': r[8],
+            'created_at': r[9].isoformat() if r[9] else None,
+            'intent': r[10],
+            'plan_steps': plan_steps,
+        })
+    return out
+
+
+def _events_to_plan_steps(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Reduce a trace's raw event stream into the same step list the SSE
+    stream produces for the live plan-quiet card: a Planning row, then one
+    row per tool/skill, plus a few semantic markers (rbac_denied, blocked).
+    """
+    steps: list[dict[str, Any]] = []
+    for ev in events:
+        et, en, payload = ev['event_type'], ev['event_name'], ev['payload'] or {}
+        if et == 'agent_plan' and en == 'plan.created':
+            steps.append({
+                'kind': 'planning',
+                'label': 'Planning',
+                'state': 'ok',
+                'intent': payload.get('intent'),
+                'step_count': payload.get('steps'),
+            })
+        elif et == 'agent_plan' and en == 'classification.conflict':
+            steps.append({
+                'kind': 'planning',
+                'label': 'Planning',
+                'state': 'fail',
+                'intent': 'classification_conflict',
+                'step_count': 0,
+                'reason': f"rules {payload.get('rules_route')} vs model {payload.get('model_route')}",
+            })
+        elif et == 'agent_plan' and en == 'ambiguous_customer.preplan_detected':
+            steps.append({
+                'kind': 'planning',
+                'label': 'Planning',
+                'state': 'ok',
+                'intent': 'disambiguate_customer',
+                'step_count': 0,
+                'reason': 'ambiguous customer',
+            })
+        elif et == 'tool_call' and en.endswith('.complete'):
+            tool_name = en.removeprefix('tool.').removesuffix('.complete')
+            steps.append({
+                'kind': 'tool',
+                'label': tool_name,
+                'state': 'ok',
+                'latency_ms': ev.get('latency_ms'),
+            })
+        elif et == 'skill_invocation' and en.endswith('.complete'):
+            skill_name = en.removeprefix('skill.').removesuffix('.complete')
+            steps.append({
+                'kind': 'skill',
+                'label': f'skill: {skill_name}',
+                'state': 'ok',
+                'risk_level': payload.get('risk_level'),
+                'latency_ms': ev.get('latency_ms'),
+            })
+        elif et == 'rbac_decision' and not payload.get('allowed', True):
+            steps.append({
+                'kind': 'rbac',
+                'label': 'policy.rbac_check',
+                'state': 'fail',
+                'reason': payload.get('reason'),
+            })
+        elif et == 'adversarial' and ev['status'] == 'blocked':
+            steps.append({
+                'kind': 'block',
+                'label': 'adversarial.check',
+                'state': 'fail',
+                'reason': ', '.join(payload.get('flags', [])),
+            })
+        elif et == 'error' and en.startswith('plan.step.rejected.'):
+            tool = en.removeprefix('plan.step.rejected.')
+            steps.append({
+                'kind': 'tool',
+                'label': tool,
+                'state': 'queued',
+                'reason': payload.get('reason'),
+            })
+    return steps
 
 
 async def get_latest_pending_proposal(session: AsyncSession, conversation_ref: str) -> dict[str, Any] | None:

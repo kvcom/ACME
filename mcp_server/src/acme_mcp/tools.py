@@ -64,39 +64,88 @@ def search_customers(customer_name: str) -> dict[str, Any]:
 
 
 def get_customer_profile(customer_name: str) -> dict[str, Any]:
+    """Return a single customer profile.
+
+    Refuses to pick when the query is ambiguous — returns ``multiple_matches``
+    with the candidate list instead. The agent is responsible for surfacing
+    the disambiguation to the user; the MCP server never silently chooses
+    between customers (Decision Ledger principle).
+    """
     with get_conn() as conn, conn.cursor() as cur:
+        # 1) Exact case-insensitive match — wins unambiguously.
         cur.execute(
-            "SELECT id::text, name, tier, industry, region, customer_timezone, account_owner FROM customers "
-            "WHERE lower(name)=lower(%s) OR lower(name) LIKE lower(%s) ORDER BY name LIMIT 1",
-            (customer_name, f'%{customer_name}%'),
+            "SELECT id::text, name, tier, industry, region, customer_timezone, account_owner "
+            "FROM customers WHERE lower(name)=lower(%s) LIMIT 2",
+            (customer_name,),
         )
-        row = cur.fetchone()
-    if row is None:
+        rows = cur.fetchall()
+        if not rows:
+            # 2) Fall back to fuzzy substring; gather up to 5 candidates.
+            cur.execute(
+                "SELECT id::text, name, tier, industry, region, customer_timezone, account_owner "
+                "FROM customers WHERE lower(name) LIKE lower(%s) ORDER BY name LIMIT 5",
+                (f'%{customer_name}%',),
+            )
+            rows = cur.fetchall()
+
+    if not rows:
         return {'not_found': True, 'queried': customer_name}
+    if len(rows) > 1:
+        return {
+            'multiple_matches': True,
+            'queried': customer_name,
+            'matches': [
+                {'customer_id': r[0], 'name': r[1], 'region': r[4], 'tier': r[2]}
+                for r in rows
+            ],
+        }
+    row = rows[0]
     return {
         'customer_id': row[0], 'name': row[1], 'tier': row[2], 'industry': row[3],
         'region': row[4], 'customer_timezone': row[5], 'account_owner': row[6],
     }
 
 
-def _resolve_customer_id(cur, customer_id: str | None, customer_name: str | None) -> str | None:
+def _resolve_customer(cur, customer_id: str | None, customer_name: str | None) -> tuple[str | None, list[dict[str, str]]]:
+    """Return (single_customer_id, candidate_list).
+
+    - If `customer_id` is given, trust it.
+    - Else if `customer_name` matches exactly one row, return that id.
+    - Else return None and the candidate list so the caller can surface a
+      disambiguation hint instead of silently picking one.
+    """
     if customer_id:
-        return customer_id
-    if customer_name:
+        return customer_id, []
+    if not customer_name:
+        return None, []
+    cur.execute(
+        "SELECT id::text, name, region, tier FROM customers WHERE lower(name)=lower(%s) LIMIT 2",
+        (customer_name,),
+    )
+    rows = cur.fetchall()
+    if not rows:
         cur.execute(
-            "SELECT id::text FROM customers WHERE lower(name)=lower(%s) OR lower(name) LIKE lower(%s) ORDER BY name LIMIT 1",
-            (customer_name, f'%{customer_name}%'),
+            "SELECT id::text, name, region, tier FROM customers WHERE lower(name) LIKE lower(%s) ORDER BY name LIMIT 5",
+            (f'%{customer_name}%',),
         )
-        row = cur.fetchone()
-        if row:
-            return row[0]
-    return None
+        rows = cur.fetchall()
+    if len(rows) == 1:
+        return rows[0][0], []
+    candidates = [{'customer_id': r[0], 'name': r[1], 'region': r[2], 'tier': r[3]} for r in rows]
+    return None, candidates
 
 
 def get_open_issues(customer_id: str | None = None, customer_name: str | None = None) -> dict[str, Any]:
     with get_conn() as conn, conn.cursor() as cur:
-        cust_id = _resolve_customer_id(cur, customer_id, customer_name)
+        cust_id, candidates = _resolve_customer(cur, customer_id, customer_name)
         if cust_id is None:
+            if candidates:
+                return {
+                    'issues': [],
+                    'multiple_matches': True,
+                    'queried': customer_name,
+                    'matches': candidates,
+                }
             return {'issues': [], 'not_found': True}
         cur.execute(
             "SELECT issue_ref, title, severity, status, sla_status, owner "

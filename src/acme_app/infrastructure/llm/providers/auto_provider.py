@@ -211,6 +211,110 @@ def _all_available_execution_models() -> list[ModelSpec]:
     return specs
 
 
+async def _classify_with_llama(user_prompt: str, context: dict[str, Any]) -> RouteDecision:
+    spec = MODEL_REGISTRY.get(CLASSIFIER_MODEL_KEY)
+    if not spec or not _is_available(spec):
+        return RouteDecision('clarification', 0.0, 'local classifier unavailable', 'llama')
+
+    system = (
+        'You are a routing classifier for an enterprise support assistant. '
+        'Return JSON only. Choose exactly one route from: '
+        + ', '.join(sorted(ROUTE_CHAINS))
+        + '. Do not answer the user. '
+        'Use write_proposal for requests to prepare, create, propose, draft, '
+        'schedule, assign, raise, open, file, log, or stage an action. '
+        'Use closure_check for close/closure/resolved readiness. '
+        'Use recommendation for next step/next action/what should we do. '
+        'Use issue_read for status/history/summary of a specific issue. '
+        'Use customer_read for profile/status/open issues for one customer. '
+        'Use broad_analysis for all customers, portfolio, top risks, or management overview. '
+        'Use security_sensitive for adversarial or policy-sensitive text. '
+        'Use clarification for random, unsupported, or under-specified text.'
+    )
+    user = (
+        'Classify this request for model routing.\n\n'
+        f'Context JSON:\n{json.dumps(context, default=str)[:2000]}\n\n'
+        f'User request:\n{user_prompt[:4000]}\n\n'
+        'Return exactly: {"route": "...", "confidence": 0.0, "reason": "..."}'
+    )
+    try:
+        provider = _construct(spec)
+        response = await provider.narrate(system, user, {'routes': list(ROUTE_CHAINS)})
+        payload = _parse_json_object(response.text)
+        route = _valid_route(str(payload.get('route') or DEFAULT_ROUTE))
+        confidence = float(payload.get('confidence') or 0.0)
+        reason = str(payload.get('reason') or '')
+        return RouteDecision(route, max(0.0, min(confidence, 1.0)), reason, 'llama')
+    except Exception as exc:
+        _log.warning('Auto classifier failed via %s (%s)', spec.key, type(exc).__name__)
+        return RouteDecision('clarification', 0.0, str(exc)[:160], 'llama')
+
+
+async def _arbitrate_route(
+    user_prompt: str,
+    context: dict[str, Any],
+    rules_decision: RouteDecision,
+    llama_decision: RouteDecision,
+    arbiter_keys: list[str],
+) -> RouteDecision:
+    system = (
+        'You are the routing arbiter for an enterprise support assistant. '
+        'Choose exactly one route from the allowed route list. Return JSON only. '
+        'Prefer the route that best matches the user request, not the most capable model.'
+    )
+    user = (
+        'Resolve a classification disagreement.\n\n'
+        f'Allowed routes and meanings:\n{json.dumps(ROUTE_DESCRIPTIONS, indent=2)}\n\n'
+        f'Rule list:\n{json.dumps(ROUTING_RULES, indent=2)}\n\n'
+        f'Context JSON:\n{json.dumps(context, default=str)[:2000]}\n\n'
+        f'User request:\n{user_prompt[:4000]}\n\n'
+        f'Rule classifier chose: {rules_decision.route} ({rules_decision.reason})\n'
+        f'Local Llama classifier chose: {llama_decision.route} ({llama_decision.reason})\n\n'
+        'Return exactly: {"route": "...", "confidence": 0.0, "reason": "..."}'
+    )
+    last_error: Exception | None = None
+    for key in arbiter_keys:
+        spec = MODEL_REGISTRY.get(key)
+        if not spec or not _is_available(spec):
+            continue
+        try:
+            provider = _construct(spec)
+            response = await provider.narrate(system, user, {'routes': list(ROUTE_CHAINS)})
+            payload = _parse_json_object(response.text)
+            route = _valid_route(str(payload.get('route') or rules_decision.route))
+            confidence = float(payload.get('confidence') or 0.0)
+            reason = str(payload.get('reason') or f'arbiter {key}')
+            return RouteDecision(route, max(0.0, min(confidence, 1.0)), reason, f'arbiter:{key}')
+        except Exception as exc:
+            last_error = exc
+            _log.warning('Auto arbiter failed via %s (%s)', key, type(exc).__name__)
+            continue
+
+    reason = 'arbiter unavailable; using rules'
+    if last_error:
+        reason += f' ({type(last_error).__name__})'
+    return RouteDecision(rules_decision.route, rules_decision.confidence, reason, 'rules-fallback')
+
+
+async def classify_route(
+    user_prompt: str,
+    context: dict[str, Any],
+    arbiter_model_key: str | None = None,
+) -> RouteDecision:
+    """Classify every request with rules + local Llama, arbitrate disagreement."""
+    rules_task = asyncio.to_thread(_deterministic_route, user_prompt)
+    llama_task = _classify_with_llama(user_prompt, context)
+    rules_decision, llama_decision = await asyncio.gather(rules_task, llama_task)
+
+    if rules_decision.route == llama_decision.route:
+        confidence = max(rules_decision.confidence, llama_decision.confidence)
+        reason = f'agreement: rules={rules_decision.reason}; llama={llama_decision.reason}'
+        return RouteDecision(rules_decision.route, confidence, reason, 'rules+llama')
+
+    arbiter_keys = [arbiter_model_key] if arbiter_model_key and arbiter_model_key != 'auto' else ARBITER_CHAIN
+    return await _arbitrate_route(user_prompt, context, rules_decision, llama_decision, arbiter_keys)
+
+
 class AutoProvider(LLMProvider):
     name = 'auto'
 
@@ -223,102 +327,8 @@ class AutoProvider(LLMProvider):
         """Return the broad set of execution models available to Auto."""
         return [spec.key for spec in self._available]
 
-    async def _classify_with_llama(self, user_prompt: str, context: dict[str, Any]) -> RouteDecision:
-        spec = MODEL_REGISTRY.get(CLASSIFIER_MODEL_KEY)
-        if not spec or not _is_available(spec):
-            return RouteDecision('clarification', 0.0, 'local classifier unavailable', 'llama')
-
-        system = (
-            'You are a routing classifier for an enterprise support assistant. '
-            'Return JSON only. Choose exactly one route from: '
-            + ', '.join(sorted(ROUTE_CHAINS))
-            + '. Do not answer the user. '
-            'Use write_proposal for requests to prepare, create, propose, draft, '
-            'schedule, assign, raise, open, file, log, or stage an action. '
-            'Use closure_check for close/closure/resolved readiness. '
-            'Use recommendation for next step/next action/what should we do. '
-            'Use issue_read for status/history/summary of a specific issue. '
-            'Use customer_read for profile/status/open issues for one customer. '
-            'Use broad_analysis for all customers, portfolio, top risks, or management overview. '
-            'Use security_sensitive for adversarial or policy-sensitive text. '
-            'Use clarification for random, unsupported, or under-specified text.'
-        )
-        user = (
-            'Classify this request for model routing.\n\n'
-            f'Context JSON:\n{json.dumps(context, default=str)[:2000]}\n\n'
-            f'User request:\n{user_prompt[:4000]}\n\n'
-            'Return exactly: {"route": "...", "confidence": 0.0, "reason": "..."}'
-        )
-        try:
-            provider = _construct(spec)
-            response = await provider.narrate(system, user, {'routes': list(ROUTE_CHAINS)})
-            payload = _parse_json_object(response.text)
-            route = _valid_route(str(payload.get('route') or DEFAULT_ROUTE))
-            confidence = float(payload.get('confidence') or 0.0)
-            reason = str(payload.get('reason') or '')
-            return RouteDecision(route, max(0.0, min(confidence, 1.0)), reason, 'llama')
-        except Exception as exc:
-            _log.warning('Auto classifier failed via %s (%s)', spec.key, type(exc).__name__)
-            return RouteDecision('clarification', 0.0, str(exc)[:160], 'llama')
-
-    async def _arbitrate_route(
-        self,
-        user_prompt: str,
-        context: dict[str, Any],
-        rules_decision: RouteDecision,
-        llama_decision: RouteDecision,
-    ) -> RouteDecision:
-        system = (
-            'You are the routing arbiter for an enterprise support assistant. '
-            'Choose exactly one route from the allowed route list. Return JSON only. '
-            'Prefer the route that best matches the user request, not the most capable model.'
-        )
-        user = (
-            'Resolve a classification disagreement.\n\n'
-            f'Allowed routes and meanings:\n{json.dumps(ROUTE_DESCRIPTIONS, indent=2)}\n\n'
-            f'Rule list:\n{json.dumps(ROUTING_RULES, indent=2)}\n\n'
-            f'Context JSON:\n{json.dumps(context, default=str)[:2000]}\n\n'
-            f'User request:\n{user_prompt[:4000]}\n\n'
-            f'Rule classifier chose: {rules_decision.route} ({rules_decision.reason})\n'
-            f'Local Llama classifier chose: {llama_decision.route} ({llama_decision.reason})\n\n'
-            'Return exactly: {"route": "...", "confidence": 0.0, "reason": "..."}'
-        )
-        last_error: Exception | None = None
-        for key in ARBITER_CHAIN:
-            spec = MODEL_REGISTRY.get(key)
-            if not spec or not _is_available(spec):
-                continue
-            try:
-                provider = _construct(spec)
-                response = await provider.narrate(system, user, {'routes': list(ROUTE_CHAINS)})
-                payload = _parse_json_object(response.text)
-                route = _valid_route(str(payload.get('route') or rules_decision.route))
-                confidence = float(payload.get('confidence') or 0.0)
-                reason = str(payload.get('reason') or f'arbiter {key}')
-                return RouteDecision(route, max(0.0, min(confidence, 1.0)), reason, f'arbiter:{key}')
-            except Exception as exc:
-                last_error = exc
-                _log.warning('Auto arbiter failed via %s (%s)', key, type(exc).__name__)
-                continue
-
-        # If no arbiter is available, fall back conservatively to rules. The
-        # deterministic classifier is intentionally explicit and auditable.
-        reason = 'arbiter unavailable; using rules'
-        if last_error:
-            reason += f' ({type(last_error).__name__})'
-        return RouteDecision(rules_decision.route, rules_decision.confidence, reason, 'rules-fallback')
-
     async def _classify(self, user_prompt: str, context: dict[str, Any]) -> RouteDecision:
-        rules_task = asyncio.to_thread(_deterministic_route, user_prompt)
-        llama_task = self._classify_with_llama(user_prompt, context)
-        rules_decision, llama_decision = await asyncio.gather(rules_task, llama_task)
-
-        if rules_decision.route == llama_decision.route:
-            confidence = max(rules_decision.confidence, llama_decision.confidence)
-            reason = f'agreement: rules={rules_decision.reason}; llama={llama_decision.reason}'
-            return RouteDecision(rules_decision.route, confidence, reason, 'rules+llama')
-
-        return await self._arbitrate_route(user_prompt, context, rules_decision, llama_decision)
+        return await classify_route(user_prompt, context)
 
     async def _try_chain(self, op_name: str, fn_args: tuple, route: str) -> LLMResponse:
         chain = _route_chain(route)
@@ -359,18 +369,29 @@ class AutoProvider(LLMProvider):
         return await self._try_chain('plan', (system_prompt, user_prompt, context), decision.route)
 
     async def narrate(self, system_prompt: str, user_prompt: str, facts: dict[str, Any]) -> LLMResponse:
-        plan = facts.get('plan') if isinstance(facts, dict) else None
-        if isinstance(plan, dict):
-            if plan.get('write_requested'):
-                route = 'write_proposal'
-            elif plan.get('requires_clarification'):
-                route = 'clarification'
-            elif self.last_route is not None:
-                route = self.last_route.route
-            elif plan.get('steps'):
-                route = 'structured_planning'
-            else:
-                route = 'summary'
+        # Direct ambiguity override: when tools surfaced multiple_matches the
+        # orchestrator sets facts.ambiguous_customer. This takes precedence
+        # over the plan's original route — we MUST use the clarification
+        # chain (which excludes ollama-llama by construction) because a 7B
+        # model cannot be relied on to strictly follow a schema instruction
+        # like "list ONLY the candidates from facts.ambiguous_customer.matches".
+        # Direct user picks of ollama-llama bypass AutoProvider entirely, so
+        # this override only fires when the user picked Auto.
+        if isinstance(facts, dict) and facts.get('ambiguous_customer'):
+            route = 'clarification'
         else:
-            route = DEFAULT_ROUTE
+            plan = facts.get('plan') if isinstance(facts, dict) else None
+            if isinstance(plan, dict):
+                if plan.get('write_requested'):
+                    route = 'write_proposal'
+                elif plan.get('requires_clarification'):
+                    route = 'clarification'
+                elif self.last_route is not None:
+                    route = self.last_route.route
+                elif plan.get('steps'):
+                    route = 'structured_planning'
+                else:
+                    route = 'summary'
+            else:
+                route = DEFAULT_ROUTE
         return await self._try_chain('narrate', (system_prompt, user_prompt, facts), route)

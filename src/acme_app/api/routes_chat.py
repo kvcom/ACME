@@ -25,7 +25,7 @@ from acme_app.auth.current_user import CurrentUser, get_current_user
 from acme_app.config import settings
 from acme_app.infrastructure.db import repositories as repo
 from acme_app.infrastructure.db.session import get_db_session
-from acme_app.infrastructure.llm.model_registry import MODEL_REGISTRY, resolve, visible_registry
+from acme_app.infrastructure.llm.model_registry import MODEL_REGISTRY, default_key as registry_default_key, visible_registry
 from acme_app.policy.action_guard import mint_confirmation_token
 
 router = APIRouter(prefix='/chat', tags=['chat'])
@@ -37,6 +37,7 @@ class ChatInput(BaseModel):
     model_key: str | None = None
     # Back-compat: the old `provider` field still works.
     provider: str | None = None
+    resolution_route: str | None = None
 
 
 def _resolve_model(model_key: str | None, provider: str | None) -> str:
@@ -49,7 +50,7 @@ def _resolve_model(model_key: str | None, provider: str | None) -> str:
                 return k
     if settings.llm_provider in MODEL_REGISTRY:
         return settings.llm_provider
-    return 'stub'
+    return registry_default_key()
 
 
 @router.get('')
@@ -106,7 +107,7 @@ async def chat_page(
     if settings.llm_provider in visible:
         default_key = settings.llm_provider
     else:
-        default_key = next(iter(visible)) if visible else 'stub'
+        default_key = registry_default_key() if registry_default_key() in visible else next(iter(visible))
 
     return request.app.state.templates.TemplateResponse(
         request,
@@ -139,6 +140,7 @@ async def chat(
         role=user.primary_role,
         conversation_ref=payload.conversation_ref,
         provider_name=model_key,
+        resolution_route=payload.resolution_route,
     )
 
 
@@ -148,6 +150,7 @@ async def chat_stream(
     conversation_ref: str = 'CONV-DEMO',
     model_key: str | None = None,
     provider: str | None = None,
+    resolution_route: str | None = None,
     user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
     x_llm_provider: str | None = Header(default=None),
@@ -165,6 +168,7 @@ async def chat_stream(
                 session=session, query=query, username=user.username,
                 role=user.primary_role, conversation_ref=conversation_ref,
                 provider_name=resolved_key, event_sink=sink,
+                resolution_route=resolution_route,
             )
             await queue.put(('done', result.model_dump(mode='json')))
         except Exception as exc:

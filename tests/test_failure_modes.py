@@ -2,8 +2,8 @@
 
 With the stub gone, the system must surface real errors clearly:
   - Construction errors when a key is missing → caller catches.
-  - Auto's empty chain → LLMUnavailableError on first call.
-  - get_provider with unknown names → defaults to Auto, NOT to a stub.
+  - Auto helper's empty chain → LLMUnavailableError on first call.
+  - get_provider with unknown names → defaults to the manual picker default, NOT to a stub.
 """
 import pytest
 
@@ -51,15 +51,16 @@ async def test_auto_raises_when_no_provider_available(monkeypatch):
         await auto.plan('sys', 'user', {})
 
 
-def test_unknown_provider_falls_back_to_auto():
+def test_unknown_provider_falls_back_to_default_manual_model():
     from acme_app.infrastructure.llm.provider import get_provider
     provider = get_provider('this-key-does-not-exist')
-    assert provider.name == 'auto'
+    assert provider.name == 'openai'
 
 
-def test_model_registry_has_all_four_providers_plus_auto():
+def test_model_registry_has_manual_providers_without_auto():
     providers_present = {spec.provider for spec in MODEL_REGISTRY.values()}
-    assert {'auto', 'anthropic', 'openai', 'google', 'ollama'} <= providers_present
+    assert {'anthropic', 'openai', 'google', 'ollama'} <= providers_present
+    assert 'auto' not in providers_present
     # Stub is gone.
     assert 'stub' not in providers_present
 

@@ -7,9 +7,8 @@ adapters.
 """
 from __future__ import annotations
 
-from acme_app.infrastructure.llm.model_registry import MODEL_REGISTRY, ModelSpec, resolve
+from acme_app.infrastructure.llm.model_registry import MODEL_REGISTRY, ModelSpec, default_key, resolve
 from acme_app.infrastructure.llm.providers.anthropic_provider import AnthropicProvider
-from acme_app.infrastructure.llm.providers.auto_provider import AutoProvider
 from acme_app.infrastructure.llm.providers.base import LLMProvider
 from acme_app.infrastructure.llm.providers.google_provider import GoogleProvider
 from acme_app.infrastructure.llm.providers.ollama_provider import OllamaProvider
@@ -17,7 +16,6 @@ from acme_app.infrastructure.llm.providers.openai_provider import OpenAIProvider
 
 
 _FACTORIES = {
-    'auto': AutoProvider,
     'anthropic': AnthropicProvider,
     'openai': OpenAIProvider,
     'google': GoogleProvider,
@@ -29,19 +27,16 @@ _CACHE: dict[str, LLMProvider] = {}
 
 def _construct(spec: ModelSpec) -> LLMProvider:
     factory = _FACTORIES[spec.provider]
-    if spec.provider == 'auto':
-        return factory()
     return factory(model=spec.model)
 
 
 def get_provider(model_key_or_provider: str | None = None) -> LLMProvider:
     """Resolve a model_key (preferred) or legacy provider name to a provider instance.
 
-    Returns AutoProvider for unknown keys or 'auto'. Real providers raise
-    RuntimeError at construction if their credentials are missing — Auto wraps
-    that into chain fallback; an explicit pick surfaces the error.
+    Returns the manual picker default for unknown keys. Real providers raise
+    RuntimeError at construction if their credentials are missing.
     """
-    key = (model_key_or_provider or 'auto').lower()
+    key = (model_key_or_provider or default_key()).lower()
     # Legacy fallback: callers passing a bare provider name get its first model.
     if key in _FACTORIES and key not in MODEL_REGISTRY:
         for k, spec in MODEL_REGISTRY.items():

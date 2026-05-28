@@ -8,12 +8,14 @@ recovery from malformed LLM JSON.
 import pytest
 
 from acme_app.application.planner import create_plan
+from acme_app.application.orchestrator import _deterministic_route_for_current_message
 from acme_app.infrastructure.llm.providers.auto_provider import (
     PRIORITY_CHAIN,
     ROUTE_CHAINS,
     AutoProvider,
     LLMUnavailableError,
     RouteDecision,
+    classify_route,
     _deterministic_route,
 )
 
@@ -54,6 +56,13 @@ def test_deterministic_auto_route_write_takes_precedence():
     )
 
     assert decision.route == 'write_proposal'
+
+
+def test_current_message_customer_selection_routes_to_customer_read():
+    decision = _deterministic_route_for_current_message('Acme Logistics Europe')
+
+    assert decision.route == 'customer_read'
+    assert decision.source == 'rules'
 
 
 def test_auto_provider_no_keys_results_in_unavailable(monkeypatch):
@@ -240,6 +249,62 @@ async def test_auto_provider_uses_arbiter_on_classifier_disagreement(monkeypatch
         source='arbiter:gpt-5.4-mini',
     )
     assert response.model == 'gpt-5.4-mini'
+
+
+@pytest.mark.asyncio
+async def test_explicit_model_is_referee_on_classifier_disagreement(monkeypatch):
+    """Non-Auto selections still run rules+Llama first, then use the pick as arbiter."""
+    from acme_app.config import settings
+    from acme_app.infrastructure.llm.providers import auto_provider as auto_mod
+    from acme_app.infrastructure.llm.providers.base import LLMResponse
+
+    monkeypatch.setattr(settings, 'anthropic_api_key', 'sk-test')
+    monkeypatch.setattr(settings, 'openai_api_key', '')
+    monkeypatch.setattr(settings, 'google_api_key', '')
+    monkeypatch.setattr(settings, 'ollama_base_url', 'http://example:11434')
+
+    seen_models = []
+
+    class _LocalClassifier:
+        async def narrate(self, *_a, **_kw):
+            return LLMResponse(
+                text='{"route":"customer_read","confidence":0.7,"reason":"local read"}',
+                prompt_tokens=1, completion_tokens=1, latency_ms=1,
+                model='llama-classifier',
+            )
+
+    class _SelectedReferee:
+        def __init__(self, model):
+            self.model = model
+
+        async def narrate(self, *_a, **_kw):
+            seen_models.append(self.model)
+            return LLMResponse(
+                text='{"route":"recommendation","confidence":0.91,"reason":"selected model sees next step"}',
+                prompt_tokens=1, completion_tokens=1, latency_ms=1,
+                model=self.model,
+            )
+
+    def _construct(spec):
+        if spec.provider == 'ollama':
+            return _LocalClassifier()
+        return _SelectedReferee(spec.model)
+
+    monkeypatch.setattr(auto_mod, '_construct', _construct)
+
+    decision = await classify_route(
+        'I have a call with Northwind today. What are the open issues, latest status, and recommended next step?',
+        {'role': 'support_user'},
+        arbiter_model_key='claude-sonnet-4-6',
+    )
+
+    assert decision == RouteDecision(
+        route='recommendation',
+        confidence=0.91,
+        reason='selected model sees next step',
+        source='arbiter:claude-sonnet-4-6',
+    )
+    assert seen_models == ['claude-sonnet-4-6']
 
 
 @pytest.mark.asyncio

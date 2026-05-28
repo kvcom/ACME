@@ -56,6 +56,9 @@
   --radius-lg: 12px;
   --radius-xl: 16px;
   --radius-full: 9999px;
+
+  /* Centered chat column (ChatGPT / Claude style) */
+  --thread-max-width: 768px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -396,9 +399,10 @@ table.tbl tr:hover td { background: var(--bg-surface-raised); }
 }
 .thread {
   overflow-y: auto;
-  padding: 24px 32px 80px;
+  padding: 24px 24px 80px;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 24px;
 }
 .rail {
@@ -412,10 +416,13 @@ table.tbl tr:hover td { background: var(--bg-surface-raised); }
 
 /* Composer */
 .composer {
-  position: sticky; bottom: 0;
+  position: sticky;
+  bottom: 0;
+  width: 100%;
+  max-width: var(--thread-max-width);
   background: linear-gradient(to top, var(--bg-base) 65%, transparent);
-  padding: 16px 32px 16px;
-  margin: 0 -32px -80px;
+  padding: 16px 0 16px;
+  margin-top: auto;
 }
 .composer-inner {
   display: flex; align-items: center; gap: 10px;
@@ -446,10 +453,16 @@ table.tbl tr:hover td { background: var(--bg-surface-raised); }
 .conv-item .meta { font-family: var(--font-mono); font-size: 9px; color: var(--text-dim); display: flex; gap: 6px; align-items: center; }
 .conv-item .pending-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
-/* Message bubbles */
-.msg { display: flex; flex-direction: column; gap: 8px; max-width: 740px; }
-.msg-user { align-self: flex-end; align-items: flex-end; }
-.msg-bot  { align-self: stretch; max-width: 760px; }
+/* Message bubbles — shared centered column; user right, bot left */
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: var(--thread-max-width);
+}
+.msg-user { align-items: flex-end; }
+.msg-bot  { align-items: flex-start; }
 .msg-meta { display: flex; gap: 6px; align-items: center; font-size: 10px; color: var(--text-muted); }
 .msg-meta .who { font-family: var(--font-mono); letter-spacing: 0.06em; }
 .msg-body-user {

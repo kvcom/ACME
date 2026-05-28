@@ -39,6 +39,22 @@ class ProposedActionDTO(BaseModel):
     expires_at: int
 
 
+class ResolutionOptionDTO(BaseModel):
+    key: str
+    label: str
+    route: str
+    reason: str = ''
+
+
+class ResolutionRequiredDTO(BaseModel):
+    kind: str = 'route_conflict'
+    title: str
+    message: str
+    rules: ResolutionOptionDTO
+    model: ResolutionOptionDTO
+    options: list[ResolutionOptionDTO] = Field(default_factory=list)
+
+
 class ChatResponse(BaseModel):
     trace_ref: str
     intent: str | None = None
@@ -53,7 +69,7 @@ class ChatResponse(BaseModel):
     cost_usd: float = 0.0
     total_tokens: int = 0
     latency_ms: int = 0
-    provider: str = 'auto'
+    provider: str = 'gpt-5.4-mini'
     model: str = ''
     plan_model: str = ''
     narration_model: str = ''
@@ -61,4 +77,5 @@ class ChatResponse(BaseModel):
     route_confidence: float | None = None
     route_source: str | None = None
     used_external_llm: bool = False
+    resolution_required: ResolutionRequiredDTO | None = None
     query_redacted: str = ''

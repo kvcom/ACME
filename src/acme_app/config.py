@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     )
 
     app_env: str = 'dev'
-    llm_provider: str = 'auto'
-    llm_model: str = 'auto-router'
+    llm_provider: str = 'gpt-5.4-mini'
+    llm_model: str = 'gpt-5.4-mini'
 
     anthropic_api_key: str = ''
     anthropic_model: str = 'claude-sonnet-4-6'

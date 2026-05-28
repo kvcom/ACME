@@ -21,6 +21,10 @@
   let currentModelKey = (() => {
     try { return localStorage.getItem(STORAGE_KEY); } catch { return null; }
   })() || document.body.dataset.modelKey || 'stub';
+  if (!document.querySelector(`.provider-opt[data-model-key="${CSS.escape(currentModelKey)}"]`)) {
+    currentModelKey = document.body.dataset.modelKey || document.querySelector('.provider-opt')?.dataset.modelKey || 'gpt-5.4-mini';
+    try { localStorage.setItem(STORAGE_KEY, currentModelKey); } catch {}
+  }
   try { setProvider(currentModelKey); } catch (e) { console.warn('[acme] setProvider failed', e); }
 
   function escape(s) {
@@ -97,6 +101,12 @@
 
   function followThread(force = false) {
     if (!force && !autoFollow) return;
+    requestAnimationFrame(() => {
+      threadEl.scrollTop = threadEl.scrollHeight;
+    });
+  }
+
+  function scrollToLatestOnLoad() {
     requestAnimationFrame(() => {
       threadEl.scrollTop = threadEl.scrollHeight;
     });
@@ -242,6 +252,7 @@
     });
   }
   renderHistoricalAnswers();
+  scrollToLatestOnLoad();
 
   // Sidebar delete button — soft-delete (trace data preserved per D-015).
   document.querySelectorAll('.conv-delete').forEach(btn => {
@@ -390,6 +401,41 @@
     startTtl(pa.expires_at);
   }
 
+  function renderResolutionCard(resolution, originalQuery) {
+    if (!resolution) return;
+    clearRail();
+    const options = resolution.options || [];
+    railEl.insertAdjacentHTML('beforeend', `
+      <div class="action-card" data-role="resolution-card">
+        <div class="ah">
+          <div>
+            <div class="label" style="color: var(--accent-dim);">Resolution required</div>
+            <div class="mono" style="font-size:11px; color: var(--text-high); margin-top:2px;">${escape(resolution.title || 'Classification conflict')}</div>
+          </div>
+        </div>
+        <div class="ab">
+          <p style="font-size: 11px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 12px;">${escape(resolution.message || '')}</p>
+          <div class="action-row"><span class="k">Rules</span> <span class="v">${escape(resolution.rules?.route || '—')}</span></div>
+          <div class="action-row"><span class="k">Model</span> <span class="v">${escape(resolution.model?.route || '—')}</span></div>
+          <div style="margin-top: 12px; display: grid; gap: 8px;">
+            ${options.map(opt => `
+              <button class="btn btn-sm" data-resolution-route="${escape(opt.route)}" data-resolution-label="${escape(opt.label)}" style="justify-content:center;">
+                ${escape(opt.label)}
+              </button>
+            `).join('')}
+          </div>
+        </div>
+      </div>`);
+    railEl.querySelectorAll('[data-resolution-route]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const route = btn.dataset.resolutionRoute;
+        const label = btn.dataset.resolutionLabel || route;
+        clearRail();
+        send(originalQuery, {route, label, showUser: false});
+      });
+    });
+  }
+
   function startTtl(expiresAt) {
     const el = railEl.querySelector('[data-role="ttl-clock"]');
     if (!el || !expiresAt) return;
@@ -471,9 +517,8 @@
     const planModel = r.plan_model || '';
     const narrationModel = r.narration_model || r.model || '';
     const routeSource = r.route_source ? ` (${r.route_source})` : '';
-    const modelText = r.provider === 'auto'
-      ? `auto${r.route ? ':' + r.route : ''}${routeSource} → plan ${planModel || 'n/a'} / answer ${narrationModel || 'n/a'}`
-      : `${r.provider} → ${narrationModel || r.model || 'unknown'}`;
+    const routeText = r.route ? `:${r.route}${routeSource}` : '';
+    const modelText = `${r.provider || 'model'}${routeText} → plan ${planModel || 'n/a'} / answer ${narrationModel || 'n/a'}`;
     const externalText = r.used_external_llm ? 'cloud used' : 'local only';
     answerRegion.insertAdjacentHTML('beforeend', `
       <div class="trace-meta">
@@ -489,14 +534,17 @@
   }
 
   // ── Send ───────────────────────────────────────────────────────────────
-  function send() {
-    const q = queryEl.value.trim();
+  function send(queryOverride = null, resolution = null) {
+    if (queryOverride && typeof queryOverride !== 'string') queryOverride = null;
+    const q = (queryOverride || queryEl.value).trim();
     if (!q) return;
     sending = true;
     autoFollow = true;
     hideWelcome();
-    appendUserTurn(q);
-    queryEl.value = '';
+    if (!resolution || resolution.showUser !== false) {
+      appendUserTurn(q);
+    }
+    if (!queryOverride) queryEl.value = '';
     sendBtn.disabled = true;
     clearRail();
 
@@ -509,7 +557,11 @@
       elapsedEl.textContent = `${((Date.now() - start) / 1000).toFixed(1)}s elapsed`;
     }, 100);
 
-    const url = `/chat/stream?query=${encodeURIComponent(q)}&conversation_ref=${encodeURIComponent(convRef())}&model_key=${encodeURIComponent(modelKey())}`;
+    let url = `/chat/stream?query=${encodeURIComponent(q)}&conversation_ref=${encodeURIComponent(convRef())}&model_key=${encodeURIComponent(modelKey())}`;
+    if (resolution?.route) {
+      url += `&resolution_route=${encodeURIComponent(resolution.route)}`;
+      addStep(planEl, 'resolution', `human resolution <small>· ${escape(resolution.label || resolution.route)}</small>`, 'ok');
+    }
     const es = new EventSource(url);
     let evidenceAccum = [];
 
@@ -586,6 +638,8 @@
 
       if (r.proposed_action) {
         renderProposedActionCard(r.proposed_action);
+      } else if (r.resolution_required) {
+        renderResolutionCard(r.resolution_required, q);
       } else if (evidenceAccum.length && r.badge !== 'Permission Denied' && r.badge !== 'Adversarial Input Blocked') {
         setEvidence(evidenceAccum);
       }

@@ -20,23 +20,36 @@ used by the SSE endpoint. When event_sink is None (eval, tests) it is a no-op.
 from __future__ import annotations
 
 import logging
+import json
 import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from acme_app.application.adversarial import check_query, validate_step, validate_step_arguments
 from acme_app.application.planner import create_plan
 from acme_app.application.propose_confirm import build_proposed_action, get_pending_action, stage_pending_action
 from acme_app.application.prompts import NARRATION_PREAMBLE
-from acme_app.application.schemas import ChatResponse, ProposedActionDTO
+from acme_app.application.schemas import (
+    ChatResponse,
+    ProposedActionDTO,
+    ResolutionOptionDTO,
+    ResolutionRequiredDTO,
+)
 from acme_app.domain.evidence import badge_for
 from acme_app.infrastructure.db import repositories as repo
 from acme_app.infrastructure.llm.model_registry import MODEL_REGISTRY
 from acme_app.infrastructure.llm.provider import get_provider
+from acme_app.infrastructure.llm.providers.auto_provider import (
+    ROUTE_DESCRIPTIONS,
+    ROUTE_CHAINS,
+    RouteDecision,
+    _deterministic_route,
+)
 from acme_app.infrastructure.mcp_client.client import MCPClient, MCPClientError
 from acme_app.infrastructure.mcp_client.schemas import WRITE_TOOLS
 from acme_app.infrastructure.redis_memory import conversation_memory
@@ -51,6 +64,75 @@ from acme_app.skills.registry import SKILLS
 
 _log = logging.getLogger(__name__)
 EventSink = Callable[[str, dict[str, Any]], Awaitable[None]] | None
+
+
+async def _detect_customer_ambiguity_preplan(
+    session: AsyncSession, user_query: str,
+) -> dict[str, Any] | None:
+    """Check the user's raw query against the customers table BEFORE the LLM
+    plans anything.
+
+    Returns an ambiguous_customer dict (queried + matches) if the query
+    mentions a customer-name stem (e.g. "Acme") that matches multiple
+    customers, AND the user did NOT include any disambiguating word —
+    a non-stem token from one specific candidate's name, or that candidate's
+    region. Otherwise returns None.
+
+    This sits in front of the planner so the LLM can't silently pre-resolve
+    an ambiguous reference by stuffing a guessed full name into tool args.
+    """
+    if not user_query:
+        return None
+    rows = (await session.execute(text(
+        "SELECT name, tier, region FROM customers"
+    ))).all()
+    customers = [{'name': r[0], 'tier': r[1], 'region': r[2]} for r in rows]
+    q = user_query.lower()
+
+    # 1) Did the user explicitly include any customer's full name?
+    #    If yes, no ambiguity — they were specific.
+    if any(c['name'].lower() in q for c in customers):
+        return None
+
+    # 2) Group customers by the first token of their name. Stems that map to
+    #    >1 customer are the candidates for ambiguity.
+    stem_groups: dict[str, list[dict[str, Any]]] = {}
+    for c in customers:
+        first = c['name'].split()[0].lower()
+        stem_groups.setdefault(first, []).append(c)
+
+    for stem, group in stem_groups.items():
+        if len(group) <= 1:
+            continue
+        if not re.search(r'\b' + re.escape(stem) + r'\b', q):
+            continue
+        # The user said the stem. Did they also say something that picks one?
+        disambiguated_candidates: list[dict[str, Any]] = []
+        for c in group:
+            # Non-stem tokens from this customer's name (e.g. for "Acme
+            # Manufacturing Group" → ["manufacturing", "group"])
+            extra_tokens = [
+                t.lower() for t in c['name'].split()
+                if t.lower() != stem and len(t) > 3
+            ]
+            region = (c.get('region') or '').lower()
+            tier = (c.get('tier') or '').lower()
+            if any(t in q for t in extra_tokens):
+                disambiguated_candidates.append(c)
+            elif region and re.search(r'\b' + re.escape(region) + r'\b', q):
+                disambiguated_candidates.append(c)
+            elif tier and tier in q:
+                disambiguated_candidates.append(c)
+        if len(disambiguated_candidates) == 1:
+            return None  # User disambiguated via region / extra token / tier
+        # Either no disambiguator, or it disambiguates to more than one →
+        # still ambiguous.
+        return {
+            'queried': stem.title(),
+            'matches': group,
+        }
+
+    return None
 
 # Customers we know about, used to recover a "last customer in scope" hint when
 # Redis has expired and we're rebuilding context from the durable PG history.
@@ -146,8 +228,99 @@ def _external_llm_used(plan_model: str, narration_model: str, route_source: str 
         model and not model.startswith(('llama', 'qwen'))
         for model in (plan_model, narration_model)
     )
-    arbiter_used = bool(route_source and route_source.startswith('arbiter:'))
-    return model_used or arbiter_used
+    classifier_used = False
+    if route_source and route_source.startswith(('arbiter:', 'model:')):
+        classifier_key = route_source.split(':', 1)[1]
+        classifier_used = not classifier_key.startswith('ollama-')
+    return model_used or classifier_used
+
+
+def _parse_json_object(text_value: str) -> dict[str, Any]:
+    candidate = (text_value or '').strip()
+    match = re.fullmatch(r'```(?:json)?\s*(.*?)\s*```', candidate, re.DOTALL)
+    if match:
+        candidate = match.group(1).strip()
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _valid_route(route: str) -> str:
+    return route if route in ROUTE_CHAINS else 'clarification'
+
+
+def _deterministic_route_for_current_message(user_query: str) -> RouteDecision:
+    """Classify the current user message without letting old transcript text dominate."""
+    text = (user_query or '').strip().lower()
+    if any(text == customer.lower() for customer in _KNOWN_CUSTOMERS):
+        return RouteDecision('customer_read', 1.0, 'rule: exact known customer selection', 'rules')
+    return _deterministic_route(user_query)
+
+
+async def _classify_with_selected_model(
+    provider_name: str,
+    user_prompt: str,
+    context: dict[str, Any],
+) -> RouteDecision:
+    provider = get_provider(provider_name)
+    system = (
+        'You are classifying a user request for an enterprise support assistant. '
+        'Return JSON only. Choose exactly one route from the allowed routes. '
+        'Do not answer the user.'
+    )
+    user = (
+        'Allowed routes and meanings:\n'
+        f'{json.dumps(ROUTE_DESCRIPTIONS, indent=2)}\n\n'
+        f'Context JSON:\n{json.dumps(context, default=str)[:2000]}\n\n'
+        f'User request:\n{user_prompt[:4000]}\n\n'
+        'Return exactly: {"route": "...", "confidence": 0.0, "reason": "..."}'
+    )
+    response = await provider.narrate(system, user, {'routes': list(ROUTE_CHAINS)})
+    payload = _parse_json_object(response.text)
+    route = _valid_route(str(payload.get('route') or 'clarification'))
+    confidence = float(payload.get('confidence') or 0.0)
+    reason = str(payload.get('reason') or '')
+    return RouteDecision(route, max(0.0, min(confidence, 1.0)), reason, f'model:{provider_name}')
+
+
+def _material_route_conflict(rules: RouteDecision, model: RouteDecision) -> bool:
+    """Only pause for meaningful route disagreements or low model certainty."""
+    if model.confidence and model.confidence < 0.55:
+        return True
+    if rules.route == model.route:
+        return False
+    low_material = {'summary', 'customer_read', 'issue_read'}
+    return not ({rules.route, model.route} <= low_material)
+
+
+def _resolution_payload(rules: RouteDecision, model: RouteDecision) -> ResolutionRequiredDTO:
+    rules_option = ResolutionOptionDTO(
+        key='rules',
+        label=f'Use rules: {rules.route}',
+        route=rules.route,
+        reason=rules.reason,
+    )
+    model_option = ResolutionOptionDTO(
+        key='model',
+        label=f'Use model: {model.route}',
+        route=model.route,
+        reason=model.reason,
+    )
+    other_option = ResolutionOptionDTO(
+        key='other',
+        label='Other / clarify',
+        route='clarification',
+        reason='Ask the user to clarify the intended workflow.',
+    )
+    return ResolutionRequiredDTO(
+        title='Classification conflict',
+        message='The deterministic rules and the selected model disagree about how to handle this request.',
+        rules=rules_option,
+        model=model_option,
+        options=[rules_option, model_option, other_option],
+    )
 
 
 async def _emit(sink: EventSink, name: str, payload: dict[str, Any]) -> None:
@@ -169,6 +342,7 @@ async def run_agent(
     provider_name: str,
     event_sink: EventSink = None,
     mcp_client: MCPClient | None = None,
+    resolution_route: str | None = None,
 ) -> ChatResponse:
     mcp = mcp_client or MCPClient()
     trace_ref = _new_trace_ref()
@@ -234,12 +408,102 @@ async def run_agent(
             )
         enriched_query = (history_text + '\nCurrent message:\n' + query) if history_text else query
 
+        plan_context = {
+            'role': role,
+            'last_customer': (last_customer or {}).get('name') if last_customer else None,
+            'last_issue': last_issue,
+        }
+        route_decision: RouteDecision | None = None
+
+        # Pre-plan ambiguity gate (runs BEFORE the LLM gets to plan):
+        # if the raw user query references a customer-name stem that's
+        # ambiguous across multiple known customers, and contains no
+        # disambiguator, refuse to let the LLM plan tool calls. Otherwise
+        # the LLM might pre-resolve the ambiguity by stuffing one full name
+        # into the args (GPT-4o-mini pattern) or drop tokens (Llama 7B
+        # pattern). Short-circuit to a clarification narration.
+        preplan_ambig = await _detect_customer_ambiguity_preplan(session, query)
+        if preplan_ambig:
+            ledger.event('agent_plan', 'ambiguous_customer.preplan_detected',
+                         {'queried': preplan_ambig['queried'],
+                          'candidates': [m['name'] for m in preplan_ambig['matches']]})
+            await _emit(event_sink, 'plan',
+                        {'intent': 'disambiguate_customer',
+                         'steps_count': 0,
+                         'narration_kind': 'clarification'})
+            return await _handle_preplan_ambiguity(
+                session=session, ledger=ledger,
+                username=username, role=role, conversation_ref=conversation_ref,
+                query=query, query_redacted=query_redacted,
+                provider_name=provider_name, started_ms=started_ms,
+                event_sink=event_sink, history_text=history_text,
+                ambiguity=preplan_ambig,
+            )
+
         with tracer.start_as_current_span('agent.plan'):
             try:
+                if resolution_route:
+                    route_decision = RouteDecision(
+                        route=_valid_route(resolution_route),
+                        confidence=1.0,
+                        reason='human-selected resolution',
+                        source='human',
+                    )
+                    plan_context['human_resolution_route'] = route_decision.route
+                    enriched_query = (
+                        f'Human classification resolution: handle this request as route '
+                        f'"{route_decision.route}".\n\n{enriched_query}'
+                    )
+                    ledger.event('agent_plan', 'classification.human_resolved',
+                                 {'route': route_decision.route})
+                else:
+                    rules_decision = _deterministic_route_for_current_message(query)
+                    model_decision = await _classify_with_selected_model(
+                        provider_name,
+                        query,
+                        {**plan_context, 'recent_context': history_text[:1200] if history_text else None},
+                    )
+                    if _material_route_conflict(rules_decision, model_decision):
+                        ledger.event(
+                            'agent_plan',
+                            'classification.conflict',
+                            {
+                                'rules_route': rules_decision.route,
+                                'rules_reason': rules_decision.reason,
+                                'model_route': model_decision.route,
+                                'model_reason': model_decision.reason,
+                                'model_confidence': model_decision.confidence,
+                            },
+                            status='needs_review',
+                        )
+                        await _emit(event_sink, 'plan', {
+                            'intent': 'classification_conflict',
+                            'steps_count': 0,
+                            'narration_kind': 'resolution_required',
+                        })
+                        return await _handle_resolution_required(
+                            session=session,
+                            ledger=ledger,
+                            username=username,
+                            conversation_ref=conversation_ref,
+                            query=query,
+                            query_redacted=query_redacted,
+                            provider_name=provider_name,
+                            started_ms=started_ms,
+                            event_sink=event_sink,
+                            rules_decision=rules_decision,
+                            model_decision=model_decision,
+                        )
+                    source = 'rules+model' if rules_decision.route == model_decision.route else 'rules-preferred'
+                    route_decision = RouteDecision(
+                        route=rules_decision.route,
+                        confidence=max(rules_decision.confidence, model_decision.confidence),
+                        reason=f'rules={rules_decision.reason}; model={model_decision.reason}',
+                        source=source,
+                    )
                 plan, llm_plan_response = await create_plan(
                     enriched_query, provider_name,
-                    context={'role': role, 'last_customer': (last_customer or {}).get('name') if last_customer else None,
-                             'last_issue': last_issue},
+                    context=plan_context,
                 )
             except Exception as exc:
                 ledger.event('error', 'llm.unavailable', {'error': str(exc)}, status='error')
@@ -392,6 +656,50 @@ async def run_agent(
                 facts=facts, event_sink=event_sink,
             )
 
+        # Final clearance: if the tool loop ended with a unique customer
+        # resolved (regardless of order), drop any earlier ambiguity hint.
+        # Avoids the "you confirmed Acme Manufacturing Group but the LLM
+        # still re-asks because get_open_issues was called with bare 'Acme'"
+        # failure mode.
+        cp = facts.get('customer_profile') or {}
+        if cp.get('name') and not cp.get('multiple_matches'):
+            facts.pop('ambiguous_customer', None)
+
+        # MCP ambiguity gate: if any tool returned multiple_matches, the agent
+        # must not narrate as if it had a single answer.
+        #
+        # Architectural note (per chosen-model recommendation principle):
+        # we DO NOT hardcode the clarification text here. Instead we:
+        #   1. mark the plan as requires_clarification (badge → Clarification Required)
+        #   2. leave clarification_question empty so the existing branch in
+        #      the answer-selection block falls through to narration
+        #   3. trust the chosen model to compose the
+        #      clarification in its own voice, with facts.ambiguous_customer
+        #      visible in the narration context and the NARRATION_PREAMBLE
+        #      explicitly instructing the model on what to do.
+        #
+        # The deterministic_fallback below only fires if narration itself is
+        # unreachable — same safety net as everywhere else.
+        ambig = facts.get('ambiguous_customer')
+        if ambig and ambig.get('matches'):
+            matches = ambig['matches']
+            ledger.event('agent_plan', 'ambiguous_customer.detected',
+                         {'queried': ambig.get('queried'),
+                          'candidates': [m['name'] for m in matches]})
+            plan.requires_clarification = True
+            # Keep the narration facts in sync with the mutated plan.
+            facts['plan'] = plan.model_dump()
+            # Pre-built fallback used only if the chosen model's narration
+            # fails or comes back empty. The model gets first chance.
+            facts['ambiguous_customer_fallback_text'] = (
+                f'### Multiple customers match "{ambig.get("queried")}"\n\n'
+                f'I found {len(matches)} customers in scope. Which one did you mean?\n\n'
+                + '\n'.join(
+                    f'- **{m["name"]}** · {m.get("tier", "")} · {m.get("region", "")}'
+                    for m in matches
+                )
+            )
+
         narration_provider = get_provider(provider_name)
         # Narration also sees the history so short follow-ups produce coherent
         # answers ("yes" → "OK, here's the briefing on Northwind").
@@ -413,7 +721,17 @@ async def run_agent(
                      latency_ms=narration_response.latency_ms)
 
         if plan.requires_clarification and plan.clarification_question:
+            # Planner already supplied a deterministic clarification question.
             answer = plan.clarification_question
+            badge = 'Clarification Required'
+        elif plan.requires_clarification:
+            # The chosen model is responsible for the
+            # text. Only fall back to deterministic text if narration was
+            # empty or unavailable — preserves the chosen-model recommendation
+            # principle.
+            narrated = (narration_response.text or '').strip()
+            answer = narrated or facts.get('ambiguous_customer_fallback_text') \
+                     or 'Could you clarify which customer or issue you mean?'
             badge = 'Clarification Required'
         elif proposed_dto is not None:
             answer = narration_response.text
@@ -441,12 +759,10 @@ async def run_agent(
         auto_route = None
         auto_route_confidence = None
         auto_route_source = None
-        if provider_name == 'auto':
-            route_decision = getattr(get_provider('auto'), 'last_route', None)
-            if route_decision is not None:
-                auto_route = getattr(route_decision, 'route', None)
-                auto_route_confidence = getattr(route_decision, 'confidence', None)
-                auto_route_source = getattr(route_decision, 'source', None)
+        if route_decision is not None:
+            auto_route = getattr(route_decision, 'route', None)
+            auto_route_confidence = getattr(route_decision, 'confidence', None)
+            auto_route_source = getattr(route_decision, 'source', None)
         used_external_llm = _external_llm_used(plan_model, narration_model, auto_route_source)
 
         # Order matters: the conversation row MUST exist before insert_trace runs,
@@ -534,19 +850,47 @@ async def _ingest_tool_output(
     follow-up references like "that customer" or "that issue" resolve on the
     next turn.
     """
+    # Helper: did we already resolve a unique customer earlier in this turn?
+    have_resolved_customer = (
+        bool(facts.get('customer_profile'))
+        and not facts['customer_profile'].get('multiple_matches')
+        and facts['customer_profile'].get('name')
+    )
+
     if tool_name == 'get_customer_profile':
-        facts['customer_profile'] = output
-        if output.get('name'):
+        if output.get('multiple_matches'):
+            # Only flag ambiguity if no earlier call already resolved a customer.
+            if not have_resolved_customer:
+                facts['customer_profile'] = output
+                facts['ambiguous_customer'] = {
+                    'queried': output.get('queried'),
+                    'matches': output.get('matches', []),
+                }
+        elif output.get('name'):
+            facts['customer_profile'] = output
+            # A successful unique match clears any earlier ambiguity hint —
+            # the agent has now confirmed which customer is in scope.
+            facts.pop('ambiguous_customer', None)
             cumulative_evidence.append(f'customer:{output.get("customer_id", output.get("name"))}')
             await conversation_memory.set_last_customer(username, conversation_ref, output)
+        else:
+            # not_found path
+            facts['customer_profile'] = output
     elif tool_name == 'get_open_issues':
-        facts['open_issues'] = output.get('issues', [])
-        for issue in output.get('issues', []):
-            cumulative_evidence.append(f'issue:{issue.get("issue_ref")}')
-        # Remember the first (highest-priority) open issue for follow-up refs.
-        issues = output.get('issues') or []
-        if issues and issues[0].get('issue_ref'):
-            await conversation_memory.set_last_issue(username, conversation_ref, issues[0]['issue_ref'])
+        if output.get('multiple_matches'):
+            if not have_resolved_customer:
+                facts['ambiguous_customer'] = {
+                    'queried': output.get('queried'),
+                    'matches': output.get('matches', []),
+                }
+            facts['open_issues'] = []
+        else:
+            facts['open_issues'] = output.get('issues', [])
+            for issue in output.get('issues', []):
+                cumulative_evidence.append(f'issue:{issue.get("issue_ref")}')
+            issues = output.get('issues') or []
+            if issues and issues[0].get('issue_ref'):
+                await conversation_memory.set_last_issue(username, conversation_ref, issues[0]['issue_ref'])
     elif tool_name == 'summarise_issue_history':
         facts['issue_history'] = output
         cumulative_evidence.extend(output.get('evidence', []))
@@ -745,6 +1089,211 @@ async def _confirm_pending(
         cost_usd=cost, total_tokens=prompt_tokens + completion_tokens,
         latency_ms=int(time.time() * 1000) - started_ms,
         provider=provider_name, model=llm_plan_response.model,
+        query_redacted=query_redacted,
+    )
+
+
+async def _handle_preplan_ambiguity(
+    *,
+    session: AsyncSession,
+    ledger: ledger_mod.Ledger,
+    username: str,
+    role: str,
+    conversation_ref: str,
+    query: str,
+    query_redacted: str,
+    provider_name: str,
+    started_ms: int,
+    event_sink: EventSink,
+    history_text: str,
+    ambiguity: dict[str, Any],
+) -> ChatResponse:
+    """Short-circuit path for queries the orchestrator knows are ambiguous
+    before any LLM planning. We still call narrate so the answer is composed
+    by the chosen model (architectural principle), but skip
+    the plan / tool stages entirely — they would only let the LLM hide the
+    ambiguity by pre-resolving it."""
+    matches = ambiguity['matches']
+    fallback_text = (
+        f'### Multiple customers match "{ambiguity.get("queried")}"\n\n'
+        f'I found {len(matches)} customers in scope. Which one did you mean?\n\n'
+        + '\n'.join(
+            f'- **{m["name"]}** · {m.get("tier", "")} · {m.get("region", "")}'
+            for m in matches
+        )
+    )
+    facts: dict[str, Any] = {
+        'plan': {
+            'intent': 'disambiguate_customer',
+            'requires_clarification': True,
+            'steps': [],
+            'write_requested': False,
+            'narration_kind': 'clarification',
+        },
+        'ambiguous_customer': ambiguity,
+        'ambiguous_customer_fallback_text': fallback_text,
+        'conversation_history': history_text or None,
+    }
+
+    narration_provider = get_provider(provider_name)
+    try:
+        narration_response = await narration_provider.narrate(
+            NARRATION_PREAMBLE,
+            f'{history_text}\nCurrent message:\n{query}' if history_text else query,
+            facts,
+        )
+        narrated = (narration_response.text or '').strip()
+    except Exception as exc:
+        ledger.event('error', 'llm.narrate.unavailable', {'error': str(exc)}, status='error')
+        narrated = ''
+        narration_response = None
+
+    answer = narrated or fallback_text
+    badge = 'Clarification Required'
+
+    prompt_tokens = narration_response.prompt_tokens if narration_response else 0
+    completion_tokens = narration_response.completion_tokens if narration_response else 0
+    model = narration_response.model if narration_response else ''
+    llm_latency = narration_response.latency_ms if narration_response else 0
+    cost = compute_cost(provider_name, prompt_tokens, completion_tokens)
+
+    ledger.event('final_response', 'narration.complete',
+                 {'model': model, 'len': len(answer),
+                  'mode': 'preplan_clarification'},
+                 latency_ms=llm_latency)
+
+    await repo.conversation_upsert(session, conversation_ref, username, query[:200])
+    await ledger_mod.persist(
+        ledger=ledger, session=session, conversation_ref=conversation_ref,
+        user_query=query, user_query_redacted=query_redacted,
+        detected_intent='disambiguate_customer',
+        final_answer=answer, final_status=badge,
+        llm_provider=provider_name, llm_model=model,
+        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+        estimated_cost_usd=cost, llm_latency_ms=llm_latency,
+        tool_latency_ms=0, otel_trace_id=current_trace_id_hex(),
+    )
+    await conversation_memory.append_context(
+        username, conversation_ref, {'role': 'user', 'text': query[:500]},
+    )
+    await conversation_memory.append_context(
+        username, conversation_ref,
+        {'role': 'assistant', 'text': answer[:500], 'trace_ref': ledger.trace_ref},
+    )
+    await _emit(event_sink, 'final_response', {
+        'trace_ref': ledger.trace_ref, 'badge': badge, 'answer': answer,
+        'cost_usd': cost, 'total_tokens': prompt_tokens + completion_tokens,
+        'latency_ms': int(time.time() * 1000) - started_ms,
+        'plan_model': '',
+        'narration_model': model,
+        'used_external_llm': _external_llm_used('', model or provider_name, None),
+    })
+
+    return ChatResponse(
+        trace_ref=ledger.trace_ref,
+        intent='disambiguate_customer',
+        answer=answer, badge=badge,
+        evidence=[], proposed_action=None,
+        tools_called=[], skills_invoked=[],
+        risk_level=None, missing_information=[],
+        cost_usd=cost, total_tokens=prompt_tokens + completion_tokens,
+        latency_ms=int(time.time() * 1000) - started_ms,
+        provider=provider_name, model=model,
+        plan_model='',
+        narration_model=model,
+        used_external_llm=_external_llm_used('', model or provider_name, None),
+        query_redacted=query_redacted,
+    )
+
+
+async def _handle_resolution_required(
+    *,
+    session: AsyncSession,
+    ledger: ledger_mod.Ledger,
+    username: str,
+    conversation_ref: str,
+    query: str,
+    query_redacted: str,
+    provider_name: str,
+    started_ms: int,
+    event_sink: EventSink,
+    rules_decision: RouteDecision,
+    model_decision: RouteDecision,
+) -> ChatResponse:
+    resolution = _resolution_payload(rules_decision, model_decision)
+    answer = (
+        'I found a classification conflict that needs your decision before I continue.\n\n'
+        f'- Rules: **{rules_decision.route}**'
+        + (f' — {rules_decision.reason}' if rules_decision.reason else '')
+        + '\n'
+        f'- Selected model: **{model_decision.route}**'
+        + (f' — {model_decision.reason}' if model_decision.reason else '')
+    )
+    badge = 'Resolution Required'
+    latency_ms = int(time.time() * 1000) - started_ms
+
+    await _emit(event_sink, 'contradiction_required', resolution.model_dump(mode='json'))
+
+    await repo.conversation_upsert(session, conversation_ref, username, query[:200])
+    await ledger_mod.persist(
+        ledger=ledger,
+        session=session,
+        conversation_ref=conversation_ref,
+        user_query=query,
+        user_query_redacted=query_redacted,
+        detected_intent='classification_conflict',
+        final_answer=answer,
+        final_status=badge,
+        llm_provider=provider_name,
+        llm_model='',
+        prompt_tokens=0,
+        completion_tokens=0,
+        estimated_cost_usd=0.0,
+        llm_latency_ms=0,
+        tool_latency_ms=0,
+        otel_trace_id=current_trace_id_hex(),
+    )
+    await conversation_memory.append_context(
+        username, conversation_ref, {'role': 'user', 'text': query[:500]},
+    )
+    await conversation_memory.append_context(
+        username, conversation_ref,
+        {'role': 'assistant', 'text': answer[:500], 'trace_ref': ledger.trace_ref},
+    )
+
+    payload = {
+        'trace_ref': ledger.trace_ref,
+        'badge': badge,
+        'answer': answer,
+        'cost_usd': 0.0,
+        'total_tokens': 0,
+        'latency_ms': latency_ms,
+        'route': rules_decision.route,
+        'route_confidence': rules_decision.confidence,
+        'route_source': 'conflict',
+        'used_external_llm': _external_llm_used('', '', model_decision.source),
+        'resolution_required': resolution.model_dump(mode='json'),
+    }
+    await _emit(event_sink, 'final_response', payload)
+
+    return ChatResponse(
+        trace_ref=ledger.trace_ref,
+        intent='classification_conflict',
+        answer=answer,
+        badge=badge,
+        evidence=[],
+        tools_called=[],
+        skills_invoked=[],
+        cost_usd=0.0,
+        total_tokens=0,
+        latency_ms=latency_ms,
+        provider=provider_name,
+        model='',
+        route=rules_decision.route,
+        route_confidence=rules_decision.confidence,
+        route_source='conflict',
+        used_external_llm=_external_llm_used('', '', model_decision.source),
+        resolution_required=resolution,
         query_redacted=query_redacted,
     )
 

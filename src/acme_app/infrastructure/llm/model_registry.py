@@ -5,7 +5,7 @@ Each entry maps a stable model_key (used as the API parameter) to:
   - provider     — which backend adapter to route through
   - model        — the provider-specific model identifier
   - label        — human-readable name for the UI
-  - badge        — short provider chip ("anthropic", "openai", "google", "local", "auto")
+  - badge        — short provider chip ("anthropic", "openai", "google", "local")
   - input_per_1k / output_per_1k — USD cost per 1K tokens
   - visible      — show in the UI dropdown (False = backend-only)
 
@@ -30,13 +30,6 @@ class ModelSpec:
 
 
 MODEL_REGISTRY: dict[str, ModelSpec] = {
-    # Auto — picks the best available model based on availability, cost and locality.
-    'auto': ModelSpec(
-        key='auto', provider='auto', model='auto-router',
-        label='Auto',
-        badge='smart',
-    ),
-
     # Anthropic — Claude family.
     'claude-opus-4-7': ModelSpec(
         key='claude-opus-4-7', provider='anthropic', model='claude-opus-4-7',
@@ -82,14 +75,15 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
 
 
 def resolve(model_key: str | None) -> ModelSpec:
-    """Look up a model_key, defaulting to Auto when unknown / None."""
+    """Look up a model_key, defaulting to the manual picker default."""
+    fallback = MODEL_REGISTRY[default_key()]
     if not model_key:
-        return MODEL_REGISTRY['auto']
-    return MODEL_REGISTRY.get(model_key, MODEL_REGISTRY['auto'])
+        return fallback
+    return MODEL_REGISTRY.get(model_key, fallback)
 
 
 def default_key() -> str:
-    return 'auto'
+    return 'gpt-5.4-mini'
 
 
 def visible_keys() -> list[str]:
