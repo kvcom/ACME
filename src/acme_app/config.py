@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=('.env', '.env.example'),
+        env_file=('.env.example', '.env'),
         env_file_encoding='utf-8',
         extra='ignore',
     )
@@ -13,11 +13,11 @@ class Settings(BaseSettings):
     llm_model: str = 'auto-router'
 
     anthropic_api_key: str = ''
-    anthropic_model: str = 'claude-sonnet-4-20250514'
+    anthropic_model: str = 'claude-sonnet-4-6'
     openai_api_key: str = ''
-    openai_model: str = 'gpt-4o-mini'
+    openai_model: str = 'gpt-5.4-mini'
     google_api_key: str = ''
-    google_model: str = 'gemini-1.5-flash'
+    google_model: str = 'gemini-3.5-flash'
     ollama_base_url: str = 'http://host.docker.internal:11434'
 
     database_url: str = 'postgresql+asyncpg://acme:acme@postgres:5432/acme'

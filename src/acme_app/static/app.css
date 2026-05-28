@@ -617,7 +617,7 @@ table.tbl tr:hover td { background: var(--bg-surface-raised); }
 /* ─── Lightweight utilities for the simpler layout ─── */
 
 /* Inline trace metadata line under bot responses
-   <div class="trace-meta">TRC-00042 · $0.012 · 4.2k tokens · 3.4s · claude-haiku-4-5 ›</div> */
+   <div class="trace-meta">TRC-00042 · $0.012 · 4.2k tokens · 3.4s · claude-sonnet-4-6 ›</div> */
 .trace-meta {
   font-family: var(--font-mono);
   font-size: 10px;

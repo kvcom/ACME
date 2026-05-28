@@ -11,12 +11,12 @@ The chain is fixed and ordered:
 
     ollama-qwen   →  local, free, fast
     ollama-llama  →  local, free
-    gemini-flash  →  cheapest cloud ($0.000075 in / $0.0003 out per 1K)
-    gpt-4o-mini   →  next cheapest
-    claude-haiku-4
-    gemini-pro
-    gpt-4o
-    claude-sonnet-4
+    gpt-5.4-mini  →  fast OpenAI
+    gemini-3.5-flash
+    claude-sonnet-4-6
+    gemini-3.1-pro-preview
+    gpt-5.5
+    claude-opus-4-7
 
 The actually-used model is returned in LLMResponse.model so the trace viewer
 shows which one ran. If nothing is available we raise LLMUnavailable, which
@@ -46,12 +46,12 @@ class LLMUnavailableError(RuntimeError):
 PRIORITY_CHAIN: list[str] = [
     'ollama-qwen',
     'ollama-llama',
-    'gemini-flash',
-    'gpt-4o-mini',
-    'claude-haiku-4',
-    'gemini-pro',
-    'gpt-4o',
-    'claude-sonnet-4',
+    'gpt-5.4-mini',
+    'gemini-3.5-flash',
+    'claude-sonnet-4-6',
+    'gemini-3.1-pro-preview',
+    'gpt-5.5',
+    'claude-opus-4-7',
 ]
 
 

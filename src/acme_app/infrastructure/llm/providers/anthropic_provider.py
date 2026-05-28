@@ -8,6 +8,7 @@ badge to the user).
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
@@ -103,6 +104,19 @@ Respond with JSON only matching this schema:
 Produce no prose outside the JSON object."""
 
 
+def _parse_json_object(text: str) -> dict[str, Any]:
+    """Parse provider JSON, tolerating fenced JSON blocks."""
+    candidate = text.strip()
+    match = re.fullmatch(r'```(?:json)?\s*(.*?)\s*```', candidate, re.DOTALL)
+    if match:
+        candidate = match.group(1).strip()
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 class AnthropicProvider(LLMProvider):
     name = 'anthropic'
 
@@ -125,10 +139,7 @@ class AnthropicProvider(LLMProvider):
         text_block = ''.join(b.text for b in resp.content if getattr(b, 'type', '') == 'text')
         # If JSON is malformed we don't try to "fix" it — planner.create_plan
         # already has a safe-default fallback for unparseable LLM output.
-        try:
-            parsed = json.loads(text_block)
-        except json.JSONDecodeError:
-            parsed = {}
+        parsed = _parse_json_object(text_block)
         return LLMResponse(
             text=text_block,
             prompt_tokens=getattr(resp.usage, 'input_tokens', 0),

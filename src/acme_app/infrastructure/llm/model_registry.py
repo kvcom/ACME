@@ -38,39 +38,39 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
     ),
 
     # Anthropic — Claude family.
-    'claude-sonnet-4': ModelSpec(
-        key='claude-sonnet-4', provider='anthropic', model='claude-sonnet-4-20250514',
-        label='Claude Sonnet 4', badge='anthropic',
-        input_per_1k=0.003, output_per_1k=0.015,
+    'claude-opus-4-7': ModelSpec(
+        key='claude-opus-4-7', provider='anthropic', model='claude-opus-4-7',
+        label='Claude Opus 4.7', badge='anthropic',
+        input_per_1k=0.015, output_per_1k=0.075,
     ),
-    'claude-haiku-4': ModelSpec(
-        key='claude-haiku-4', provider='anthropic', model='claude-haiku-4-5-20251001',
-        label='Claude Haiku 4.5', badge='anthropic',
-        input_per_1k=0.0008, output_per_1k=0.004,
+    'claude-sonnet-4-6': ModelSpec(
+        key='claude-sonnet-4-6', provider='anthropic', model='claude-sonnet-4-6',
+        label='Claude Sonnet 4.6', badge='anthropic',
+        input_per_1k=0.003, output_per_1k=0.015,
     ),
 
     # OpenAI — GPT family.
-    'gpt-4o': ModelSpec(
-        key='gpt-4o', provider='openai', model='gpt-4o',
-        label='GPT-4o', badge='openai',
-        input_per_1k=0.0025, output_per_1k=0.01,
+    'gpt-5.5': ModelSpec(
+        key='gpt-5.5', provider='openai', model='gpt-5.5',
+        label='GPT-5.5', badge='openai',
+        input_per_1k=0.0, output_per_1k=0.0,
     ),
-    'gpt-4o-mini': ModelSpec(
-        key='gpt-4o-mini', provider='openai', model='gpt-4o-mini',
-        label='GPT-4o mini', badge='openai',
-        input_per_1k=0.00015, output_per_1k=0.0006,
+    'gpt-5.4-mini': ModelSpec(
+        key='gpt-5.4-mini', provider='openai', model='gpt-5.4-mini',
+        label='GPT-5.4 mini', badge='openai',
+        input_per_1k=0.0, output_per_1k=0.0,
     ),
 
     # Google — Gemini family.
-    'gemini-pro': ModelSpec(
-        key='gemini-pro', provider='google', model='gemini-1.5-pro',
-        label='Gemini 1.5 Pro', badge='google',
-        input_per_1k=0.00125, output_per_1k=0.005,
+    'gemini-3.1-pro-preview': ModelSpec(
+        key='gemini-3.1-pro-preview', provider='google', model='gemini-3.1-pro-preview',
+        label='Gemini 3.1 Pro Preview', badge='google',
+        input_per_1k=0.0027, output_per_1k=0.0162,
     ),
-    'gemini-flash': ModelSpec(
-        key='gemini-flash', provider='google', model='gemini-1.5-flash',
-        label='Gemini 1.5 Flash', badge='google',
-        input_per_1k=0.000075, output_per_1k=0.0003,
+    'gemini-3.5-flash': ModelSpec(
+        key='gemini-3.5-flash', provider='google', model='gemini-3.5-flash',
+        label='Gemini 3.5 Flash', badge='google',
+        input_per_1k=0.00045, output_per_1k=0.0027,
     ),
 
     # Local — Ollama (no per-token cost).
