@@ -17,8 +17,8 @@ from acme_app.infrastructure.llm.providers.stub_provider import StubProvider, bu
 class OpenAIProvider(LLMProvider):
     name = 'openai'
 
-    def __init__(self) -> None:
-        self.model = settings.openai_model
+    def __init__(self, model: str | None = None) -> None:
+        self.model = model or settings.openai_model
         self._fallback = StubProvider()
         self._client = None
         if settings.openai_api_key:

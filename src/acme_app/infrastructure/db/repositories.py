@@ -280,6 +280,35 @@ async def insert_eval_result(
     })
 
 
+async def get_conversation_history(session: AsyncSession, conversation_ref: str) -> list[dict[str, Any]]:
+    """Return the full message history for a conversation_ref, ordered oldest→newest.
+
+    Each row is a (user_query, final_answer) pair plus trace metadata, ready to
+    render as an alternating sequence of user / assistant bubbles.
+    """
+    rows = (await session.execute(text("""
+        SELECT user_query_redacted, final_answer, trace_ref, final_status,
+               estimated_cost_usd, total_tokens, total_latency_ms, llm_provider, created_at
+        FROM agent_traces
+        WHERE conversation_id = (SELECT id FROM conversations WHERE conversation_ref = :ref)
+        ORDER BY created_at ASC
+    """), {'ref': conversation_ref})).all()
+    return [
+        {
+            'user_query': r[0],
+            'answer': r[1] or '',
+            'trace_ref': r[2],
+            'badge': r[3],
+            'cost_usd': float(r[4] or 0),
+            'total_tokens': r[5] or 0,
+            'latency_ms': r[6] or 0,
+            'provider': r[7],
+            'created_at': r[8].isoformat() if r[8] else None,
+        }
+        for r in rows
+    ]
+
+
 async def db_counts(session: AsyncSession) -> dict[str, int]:
     tables = ['customers', 'issues', 'issue_updates', 'next_actions', 'conversations', 'agent_traces', 'trace_events', 'tool_call_logs', 'rbac_decisions', 'eval_runs', 'eval_results']
     out: dict[str, int] = {}

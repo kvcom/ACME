@@ -241,6 +241,10 @@ async def run_agent(
         llm_latency = llm_plan_response.latency_ms + narration_response.latency_ms
         skill_output = facts.get('skill_output') or {}
 
+        # Order matters: the conversation row MUST exist before insert_trace runs,
+        # otherwise the FK lookup in repositories.insert_trace returns NULL and the
+        # trace is orphaned (invisible in /chat?conversation_ref=... history).
+        await repo.conversation_upsert(session, conversation_ref, username, query[:200])
         await ledger_mod.persist(
             ledger=ledger,
             session=session,
@@ -259,7 +263,6 @@ async def run_agent(
             tool_latency_ms=tool_latency_total,
             otel_trace_id=current_trace_id_hex(),
         )
-        await repo.conversation_upsert(session, conversation_ref, username, query[:200])
         await conversation_memory.append_context(
             username, conversation_ref,
             {'role': 'user', 'text': query[:500]},
@@ -486,6 +489,7 @@ async def _confirm_pending(
     prompt_tokens = llm_plan_response.prompt_tokens
     completion_tokens = llm_plan_response.completion_tokens
     cost = compute_cost(provider_name, prompt_tokens, completion_tokens)
+    await repo.conversation_upsert(session, conversation_ref, username, query[:200])
     await ledger_mod.persist(
         ledger=ledger, session=session,
         conversation_ref=conversation_ref,
@@ -525,6 +529,7 @@ async def _finalise_blocked(
     model = llm_response.model if llm_response else ''
     llm_latency = llm_response.latency_ms if llm_response else 0
     cost = compute_cost(provider_name, prompt_tokens, completion_tokens)
+    await repo.conversation_upsert(session, conversation_ref, ledger.username, query[:200])
     await ledger_mod.persist(
         ledger=ledger, session=session, conversation_ref=conversation_ref,
         user_query=query, user_query_redacted=query_redacted,

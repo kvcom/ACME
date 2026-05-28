@@ -3,22 +3,100 @@
   const sendBtn = document.getElementById('send');
   const threadEl = document.getElementById('thread');
   const railEl   = document.getElementById('rail');
+  const welcomeEl = document.getElementById('welcome');
   const composer = document.querySelector('.composer');
+  const providerPill = document.getElementById('provider-pill');
+  const providerPop  = document.getElementById('provider-pop');
+  const providerNameEl = document.getElementById('provider-name');
+  const sbSearch = document.getElementById('sb-search');
+
+  if (!queryEl || !sendBtn || !threadEl || !composer) {
+    console.warn('[acme] chat.js: critical element missing', {queryEl, sendBtn, threadEl, composer});
+    return;
+  }
+
+  // Persisted model choice (localStorage), default to server-rendered value.
+  // We store the model_key (e.g. "claude-sonnet-4") not the display label.
+  const STORAGE_KEY = 'acme_model_key';
+  let currentModelKey = (() => {
+    try { return localStorage.getItem(STORAGE_KEY); } catch { return null; }
+  })() || document.body.dataset.modelKey || 'stub';
+  try { setProvider(currentModelKey); } catch (e) { console.warn('[acme] setProvider failed', e); }
 
   function escape(s) {
     return String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
   }
-  function provider() { return document.getElementById('provider-name').textContent.trim() || 'stub'; }
+  function modelKey() { return currentModelKey || 'stub'; }
   function convRef()  { return document.body.dataset.conversationRef || 'CONV-DEMO'; }
   function badgeClass(b) { return 'badge badge-' + (b || '').toLowerCase().replace(/[\s_]+/g, '-').replace(/-+/g, '-'); }
 
-  // ── Thread helpers ─────────────────────────────────────────────────────
+  function setProvider(key) {
+    currentModelKey = key;
+    const opt = document.querySelector(`.provider-opt[data-model-key="${CSS.escape(key)}"]`);
+    const label = opt ? (opt.dataset.label || key) : key;
+    if (providerNameEl) providerNameEl.textContent = label;
+    try { localStorage.setItem(STORAGE_KEY, key); } catch {}
+    document.querySelectorAll('.provider-opt').forEach(el => {
+      el.classList.toggle('active', el.dataset.modelKey === key);
+    });
+  }
+
+  // ── Provider popover ──────────────────────────────────────────────────
+  if (providerPill && providerPop) {
+    providerPill.addEventListener('click', e => {
+      e.stopPropagation();
+      providerPop.classList.toggle('open');
+    });
+    document.querySelectorAll('.provider-opt').forEach(opt => {
+      opt.addEventListener('click', e => {
+        e.stopPropagation();
+        setProvider(opt.dataset.modelKey);
+        providerPop.classList.remove('open');
+      });
+    });
+    document.addEventListener('click', e => {
+      if (!providerPop.contains(e.target) && e.target !== providerPill) {
+        providerPop.classList.remove('open');
+      }
+    });
+  }
+
+  // ── Sidebar search ────────────────────────────────────────────────────
+  if (sbSearch) {
+    sbSearch.addEventListener('input', () => {
+      const q = sbSearch.value.trim().toLowerCase();
+      document.querySelectorAll('#conv-list .conv-item').forEach(item => {
+        const title = (item.dataset.convTitle || '').toLowerCase();
+        item.style.display = !q || title.includes(q) ? '' : 'none';
+      });
+      document.querySelectorAll('#conv-list .conv-group').forEach(grp => {
+        const anyVisible = [...grp.querySelectorAll('.conv-item')].some(i => i.style.display !== 'none');
+        grp.style.display = anyVisible ? '' : 'none';
+      });
+    });
+  }
+
+  // ── Welcome prompt cards ──────────────────────────────────────────────
+  document.querySelectorAll('.prompt-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const prompt = card.dataset.prompt || '';
+      queryEl.value = prompt;
+      send();
+    });
+  });
+
+  // ── Thread helpers ────────────────────────────────────────────────────
+  function hideWelcome() { if (welcomeEl) welcomeEl.style.display = 'none'; }
+
   function appendUserTurn(text) {
     const div = document.createElement('div');
     div.className = 'msg msg-user';
     div.innerHTML = `<div class="msg-body-user">${escape(text)}</div>`;
     threadEl.insertBefore(div, composer);
-    threadEl.scrollTop = threadEl.scrollHeight;
+    // Anchor the new turn near the top of the visible thread so the user can
+    // still see their prompt above the bot's response. ChatGPT-style.
+    requestAnimationFrame(() => div.scrollIntoView({block: 'start', behavior: 'smooth'}));
+    return div;
   }
 
   function startBotTurn() {
@@ -33,8 +111,55 @@
         <div data-role="answer-region"></div>
       </div>`;
     threadEl.insertBefore(wrap, composer);
-    threadEl.scrollTop = threadEl.scrollHeight;
     return wrap;
+  }
+
+  // Pulsing dots under the plan card while the LLM is composing the answer.
+  function ensureComposing(planEl) {
+    if (planEl.querySelector('.composing')) return;
+    const div = document.createElement('div');
+    div.className = 'composing';
+    div.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="label">thinking</span>';
+    planEl.appendChild(div);
+  }
+  function removeComposing(planEl) {
+    const el = planEl.querySelector('.composing');
+    if (el) el.remove();
+  }
+
+  // Type out the answer character-by-character with a blinking caret.
+  function typewriter(el, text, speed = 12) {
+    return new Promise(resolve => {
+      el.textContent = '';
+      const caret = document.createElement('span');
+      caret.className = 'typing-caret';
+      el.appendChild(caret);
+      let i = 0;
+      function step() {
+        if (i >= text.length) {
+          caret.remove();
+          return resolve();
+        }
+        const ch = text[i++];
+        const before = text.slice(0, i);
+        // Insert text node before caret so caret stays at the end.
+        caret.previousSibling
+          ? (caret.previousSibling.nodeValue = before)
+          : el.insertBefore(document.createTextNode(before), caret);
+        // Briefly pause on sentence punctuation for a more natural cadence.
+        const delay = /[.!?]/.test(ch) ? speed * 8
+                    : /[,;:]/.test(ch) ? speed * 4
+                    : speed;
+        setTimeout(step, delay);
+      }
+      step();
+    });
+  }
+
+  async function renderAnswerTyped(answerRegion, r) {
+    const p = document.createElement('p');
+    answerRegion.appendChild(p);
+    await typewriter(p, r.answer || '', 12);
   }
 
   function addStep(planEl, key, label, state) {
@@ -225,6 +350,7 @@
   function send() {
     const q = queryEl.value.trim();
     if (!q) return;
+    hideWelcome();
     appendUserTurn(q);
     queryEl.value = '';
     sendBtn.disabled = true;
@@ -239,7 +365,7 @@
       elapsedEl.textContent = `${((Date.now() - start) / 1000).toFixed(1)}s elapsed`;
     }, 100);
 
-    const url = `/chat/stream?query=${encodeURIComponent(q)}&conversation_ref=${encodeURIComponent(convRef())}&provider=${encodeURIComponent(provider())}`;
+    const url = `/chat/stream?query=${encodeURIComponent(q)}&conversation_ref=${encodeURIComponent(convRef())}&model_key=${encodeURIComponent(modelKey())}`;
     const es = new EventSource(url);
     let evidenceAccum = [];
 
@@ -247,6 +373,8 @@
     es.addEventListener('plan',      e => {
       const d = JSON.parse(e.data);
       addStep(planEl, 'plan', `<b>Planning</b> · ${d.steps_count} step${d.steps_count===1?'':'s'} <small>· ${escape(d.intent)}</small>`, 'ok');
+      // From here on, the LLM is at work composing the answer; show the dots.
+      ensureComposing(planEl);
     });
     es.addEventListener('tool_start', e => {
       const d = JSON.parse(e.data);
@@ -280,22 +408,20 @@
       addStep(planEl, 'adv', `adversarial.check <small>· ${(d.flags || []).join(', ')}</small>`, 'fail');
     });
 
-    es.addEventListener('done', e => {
+    es.addEventListener('done', async e => {
       clearInterval(tick);
       const r = JSON.parse(e.data);
       elapsedEl.textContent = `${((r.latency_ms || 0) / 1000).toFixed(1)}s · ${r.total_tokens || 0} tok · $${(r.cost_usd || 0).toFixed(4)}`;
       evidenceAccum = r.evidence || [];
+      removeComposing(planEl);
 
-      // Render based on badge / state
       if (r.badge === 'Adversarial Input Blocked') {
         renderAdversarialBanner(answerRegion, r);
       } else if (r.badge === 'Permission Denied') {
         renderDenialBanner(answerRegion, r);
         renderRoleReference(document.body.dataset.role);
-      } else if (r.badge === 'Clarification Required') {
-        renderAnswer(answerRegion, r);
       } else {
-        renderAnswer(answerRegion, r);
+        await renderAnswerTyped(answerRegion, r);
       }
       renderTraceMeta(answerRegion, r);
 
@@ -306,11 +432,13 @@
       }
 
       sendBtn.disabled = false;
+      queryEl.focus();
       es.close();
     });
 
     es.addEventListener('error', () => {
       clearInterval(tick);
+      removeComposing(planEl);
       sendBtn.disabled = false;
       es.close();
     });
@@ -340,6 +468,12 @@
     });
     clearRail();
   }
+
+  // ── New conversation ─────────────────────────────────────────────────
+  window.newConversation = function() {
+    const ref = 'CONV-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+    location.href = `/chat?conversation_ref=${encodeURIComponent(ref)}`;
+  };
 
   sendBtn.addEventListener('click', send);
   queryEl.addEventListener('keydown', e => {

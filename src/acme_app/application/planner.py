@@ -38,15 +38,35 @@ async def create_plan(query: str, provider_name: str, context: dict[str, Any]) -
         payload = {'intent': 'unknown', 'steps': [], 'requires_clarification': True,
                    'clarification_question': 'I could not understand the request.'}
 
-    payload.setdefault('intent', 'unknown')
-    payload.setdefault('steps', [])
-    payload.setdefault('write_requested', False)
-    payload.setdefault('narration_kind', 'general')
-    payload.setdefault('adversarial_flags', [])
-    payload.setdefault('requires_clarification', False)
+    # Some providers (notably Ollama with format=json) return explicit nulls for
+    # fields the schema expects as strings. Coerce missing-or-null to defaults.
+    def _set(key: str, default):
+        if payload.get(key) is None:
+            payload[key] = default
+    _set('intent', 'unknown')
+    _set('narration_kind', 'general')
+    _set('steps', [])
+    _set('adversarial_flags', [])
+    _set('write_requested', False)
+    _set('requires_clarification', False)
     payload.setdefault('clarification_question', None)
+    # If the LLM returned a string for a list field, drop it.
+    if not isinstance(payload.get('steps'), list):
+        payload['steps'] = []
+    if not isinstance(payload.get('adversarial_flags'), list):
+        payload['adversarial_flags'] = []
 
-    plan = AgentPlan.model_validate(payload)
+    try:
+        plan = AgentPlan.model_validate(payload)
+    except Exception:
+        # Schema rejected the LLM output entirely — fall back to a no-tools
+        # plan so the orchestrator can still produce a polite narration.
+        plan = AgentPlan(
+            intent=str(payload.get('intent') or 'unknown'),
+            requires_clarification=True,
+            clarification_question='I had trouble understanding the request.',
+            steps=[], write_requested=False, narration_kind='general',
+        )
 
     cleaned: list[Any] = []
     for step in plan.steps:

@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     anthropic_model: str = 'claude-sonnet-4-20250514'
     openai_api_key: str = ''
     openai_model: str = 'gpt-4o-mini'
+    google_api_key: str = ''
+    google_model: str = 'gemini-1.5-flash'
+    ollama_base_url: str = 'http://host.docker.internal:11434'
 
     database_url: str = 'postgresql+asyncpg://acme:acme@postgres:5432/acme'
     sync_database_url: str = 'postgresql://acme:acme@postgres:5432/acme'

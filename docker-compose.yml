@@ -6,9 +6,15 @@ services:
       - ./:/app
     command: uvicorn acme_app.main:app --host 0.0.0.0 --port 8000 --reload
     env_file:
-      - .env.example
+      - path: .env.example
+        required: true
+      - path: .env
+        required: false
     ports:
       - "8000:8000"
+    extra_hosts:
+      # Lets the container reach the host's Ollama on http://host.docker.internal:11434
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

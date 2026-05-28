@@ -8,19 +8,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, Header, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
+from acme_app.api._view_helpers import badge_class_for, group_conversations
 from acme_app.application.orchestrator import run_agent
 from acme_app.application.schemas import ChatResponse
 from acme_app.auth.current_user import CurrentUser, get_current_user
 from acme_app.config import settings
+from acme_app.infrastructure.db import repositories as repo
 from acme_app.infrastructure.db.session import get_db_session
+from acme_app.infrastructure.llm.model_registry import MODEL_REGISTRY, resolve
 
 router = APIRouter(prefix='/chat', tags=['chat'])
 
@@ -28,19 +32,60 @@ router = APIRouter(prefix='/chat', tags=['chat'])
 class ChatInput(BaseModel):
     query: str
     conversation_ref: str = 'CONV-DEMO'
+    model_key: str | None = None
+    # Back-compat: the old `provider` field still works.
     provider: str | None = None
 
 
-@router.get('', response_class=HTMLResponse)
-async def chat_page(request: Request, user: CurrentUser = Depends(get_current_user)) -> HTMLResponse:
+def _resolve_model(model_key: str | None, provider: str | None) -> str:
+    """Pick a model_key from the request, falling back to provider or default."""
+    if model_key and model_key in MODEL_REGISTRY:
+        return model_key
+    if provider:
+        for k, spec in MODEL_REGISTRY.items():
+            if spec.provider == provider:
+                return k
+    if settings.llm_provider in MODEL_REGISTRY:
+        return settings.llm_provider
+    return 'stub'
+
+
+@router.get('')
+async def chat_page(
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+    conversation_ref: str | None = None,
+):
+    if conversation_ref is None:
+        new_ref = f'CONV-{uuid.uuid4().hex[:8].upper()}'
+        return RedirectResponse(f'/chat?conversation_ref={new_ref}', status_code=303)
+
+    items = await repo.conversation_list(session, user.username)
+    groups = group_conversations(items)
+    active_ref = conversation_ref
+
+    history: list = []
+    if conversation_ref:
+        try:
+            history = await repo.get_conversation_history(session, conversation_ref)
+            for turn in history:
+                turn['badge_class'] = badge_class_for(turn.get('badge'))
+        except Exception:
+            history = []
+
+    default_key = settings.llm_provider if settings.llm_provider in MODEL_REGISTRY else 'stub'
+
     return request.app.state.templates.TemplateResponse(
         request,
         'chat.html',
         {
             'user': user,
-            'provider': settings.llm_provider,
-            'conversation_ref': 'CONV-DEMO',
-            'providers': ['stub', 'anthropic', 'openai', 'ollama'],
+            'default_model_key': default_key,
+            'conversation_ref': active_ref,
+            'model_registry': MODEL_REGISTRY,
+            'conversation_groups': groups,
+            'history': history,
         },
     )
 
@@ -50,16 +95,17 @@ async def chat(
     payload: ChatInput,
     user: CurrentUser = Depends(get_current_user),
     x_llm_provider: str | None = Header(default=None),
+    x_llm_model: str | None = Header(default=None),
     session: AsyncSession = Depends(get_db_session),
 ) -> ChatResponse:
-    provider = payload.provider or x_llm_provider or settings.llm_provider
+    model_key = _resolve_model(payload.model_key or x_llm_model, payload.provider or x_llm_provider)
     return await run_agent(
         session=session,
         query=payload.query,
         username=user.username,
         role=user.primary_role,
         conversation_ref=payload.conversation_ref,
-        provider_name=provider,
+        provider_name=model_key,
     )
 
 
@@ -67,12 +113,14 @@ async def chat(
 async def chat_stream(
     query: str,
     conversation_ref: str = 'CONV-DEMO',
+    model_key: str | None = None,
     provider: str | None = None,
     user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
     x_llm_provider: str | None = Header(default=None),
+    x_llm_model: str | None = Header(default=None),
 ) -> EventSourceResponse:
-    provider_name = provider or x_llm_provider or settings.llm_provider
+    resolved_key = _resolve_model(model_key or x_llm_model, provider or x_llm_provider)
     queue: asyncio.Queue[tuple[str, dict] | None] = asyncio.Queue()
 
     async def sink(event_name: str, payload: dict) -> None:
@@ -83,7 +131,7 @@ async def chat_stream(
             result = await run_agent(
                 session=session, query=query, username=user.username,
                 role=user.primary_role, conversation_ref=conversation_ref,
-                provider_name=provider_name, event_sink=sink,
+                provider_name=resolved_key, event_sink=sink,
             )
             await queue.put(('done', result.model_dump(mode='json')))
         except Exception as exc:

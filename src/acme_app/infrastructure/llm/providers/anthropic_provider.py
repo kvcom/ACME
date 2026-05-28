@@ -36,8 +36,8 @@ Do not produce any prose outside the JSON object."""
 class AnthropicProvider(LLMProvider):
     name = 'anthropic'
 
-    def __init__(self) -> None:
-        self.model = settings.anthropic_model
+    def __init__(self, model: str | None = None) -> None:
+        self.model = model or settings.anthropic_model
         self._fallback = StubProvider()
         self._client = None
         if settings.anthropic_api_key:
