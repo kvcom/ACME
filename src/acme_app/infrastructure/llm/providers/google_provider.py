@@ -5,12 +5,25 @@ Active when GOOGLE_API_KEY is set. Raises on any failure — caller decides.
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
 from acme_app.config import settings
 from acme_app.infrastructure.llm.providers.anthropic_provider import PLANNER_SYSTEM_PROMPT
 from acme_app.infrastructure.llm.providers.base import LLMProvider, LLMResponse
+
+
+def _parse_json_object(text: str) -> dict[str, Any]:
+    candidate = text.strip()
+    match = re.fullmatch(r'```(?:json)?\s*(.*?)\s*```', candidate, re.DOTALL)
+    if match:
+        candidate = match.group(1).strip()
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 class GoogleProvider(LLMProvider):
@@ -31,15 +44,12 @@ class GoogleProvider(LLMProvider):
             full_prompt,
             generation_config={
                 'response_mime_type': 'application/json',
-                'max_output_tokens': 1024,
+                'max_output_tokens': 4096,
             },
         )
         elapsed = int((time.perf_counter() - start) * 1000)
         text = response.text or '{}'
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            parsed = {}
+        parsed = _parse_json_object(text)
         usage = getattr(response, 'usage_metadata', None)
         return LLMResponse(
             text=text,
@@ -58,7 +68,7 @@ class GoogleProvider(LLMProvider):
         )
         response = await self._client.generate_content_async(
             full_prompt,
-            generation_config={'max_output_tokens': 512},
+            generation_config={'max_output_tokens': 2048},
         )
         elapsed = int((time.perf_counter() - start) * 1000)
         text = (response.text or '').strip()

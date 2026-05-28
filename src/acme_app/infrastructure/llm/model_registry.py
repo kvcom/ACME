@@ -41,7 +41,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
     'claude-opus-4-7': ModelSpec(
         key='claude-opus-4-7', provider='anthropic', model='claude-opus-4-7',
         label='Claude Opus 4.7', badge='anthropic',
-        input_per_1k=0.015, output_per_1k=0.075,
+        input_per_1k=0.005, output_per_1k=0.025,
     ),
     'claude-sonnet-4-6': ModelSpec(
         key='claude-sonnet-4-6', provider='anthropic', model='claude-sonnet-4-6',
@@ -53,34 +53,30 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
     'gpt-5.5': ModelSpec(
         key='gpt-5.5', provider='openai', model='gpt-5.5',
         label='GPT-5.5', badge='openai',
-        input_per_1k=0.0, output_per_1k=0.0,
+        input_per_1k=0.005, output_per_1k=0.03,
     ),
     'gpt-5.4-mini': ModelSpec(
         key='gpt-5.4-mini', provider='openai', model='gpt-5.4-mini',
         label='GPT-5.4 mini', badge='openai',
-        input_per_1k=0.0, output_per_1k=0.0,
+        input_per_1k=0.00075, output_per_1k=0.0045,
     ),
 
     # Google — Gemini family.
     'gemini-3.1-pro-preview': ModelSpec(
         key='gemini-3.1-pro-preview', provider='google', model='gemini-3.1-pro-preview',
         label='Gemini 3.1 Pro Preview', badge='google',
-        input_per_1k=0.0027, output_per_1k=0.0162,
+        input_per_1k=0.002, output_per_1k=0.012,
     ),
     'gemini-3.5-flash': ModelSpec(
         key='gemini-3.5-flash', provider='google', model='gemini-3.5-flash',
         label='Gemini 3.5 Flash', badge='google',
-        input_per_1k=0.00045, output_per_1k=0.0027,
+        input_per_1k=0.0015, output_per_1k=0.009,
     ),
 
     # Local — Ollama (no per-token cost).
     'ollama-llama': ModelSpec(
         key='ollama-llama', provider='ollama', model='llama3.1:8b',
         label='Llama 3.1 8B (local)', badge='local',
-    ),
-    'ollama-qwen': ModelSpec(
-        key='ollama-qwen', provider='ollama', model='qwen2.5:7b',
-        label='Qwen 2.5 7B (local)', badge='local',
     ),
 }
 

@@ -80,7 +80,12 @@ CREATE TABLE IF NOT EXISTS conversations (
     started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_message_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_message_preview TEXT,
-    message_count INTEGER NOT NULL DEFAULT 0
+    message_count INTEGER NOT NULL DEFAULT 0,
+    -- Soft-delete only — the underlying agent_traces / trace_events /
+    -- tool_call_logs / rbac_decisions rows are NEVER removed (Decision Ledger
+    -- principle, plan_v2 §2.5). This column just hides the conversation from
+    -- the user-facing sidebar and history endpoints.
+    deleted_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS agent_traces (

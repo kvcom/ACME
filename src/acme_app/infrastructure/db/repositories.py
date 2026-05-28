@@ -44,7 +44,9 @@ async def conversation_upsert(session: AsyncSession, conversation_ref: str, user
 
 async def conversation_list(session: AsyncSession, username: str) -> list[dict[str, Any]]:
     rows = (await session.execute(
-        text("SELECT conversation_ref, title, last_message_at, last_message_preview, message_count FROM conversations WHERE username=:u ORDER BY last_message_at DESC LIMIT 50"),
+        text("SELECT conversation_ref, title, last_message_at, last_message_preview, message_count "
+             "FROM conversations WHERE username=:u AND deleted_at IS NULL "
+             "ORDER BY last_message_at DESC LIMIT 50"),
         {'u': username},
     )).all()
     return [
@@ -278,6 +280,24 @@ async def insert_eval_result(
         'arp': action_reasonableness_pass, 'ap': adversarial_pass,
         'lm': latency_ms, 'cu': Decimal(str(cost_usd)), 'n': notes,
     })
+
+
+async def soft_delete_conversation(
+    session: AsyncSession, conversation_ref: str, username: str,
+) -> bool:
+    """Mark a conversation hidden from the sidebar. Trace data is untouched.
+
+    Returns True if a row was updated, False if the conversation didn't exist
+    or belonged to a different user. The constraint on username is the
+    minimum authz: a user can only soft-delete conversations they own.
+    """
+    result = await session.execute(
+        text("UPDATE conversations SET deleted_at = now() "
+             "WHERE conversation_ref = :r AND username = :u AND deleted_at IS NULL "
+             "RETURNING conversation_ref"),
+        {'r': conversation_ref, 'u': username},
+    )
+    return result.first() is not None
 
 
 async def get_conversation_history(session: AsyncSession, conversation_ref: str) -> list[dict[str, Any]]:

@@ -179,8 +179,8 @@
     });
   }
 
-  // Some smaller local LLMs (Qwen 7B in particular) emit markdown markers
-  // inline without any line breaks: "...today: ### Open Issues: 1. **X** - ..."
+  // Some smaller local LLMs emit markdown markers inline without any line
+  // breaks: "...today: ### Open Issues: 1. **X** - ..."
   // Normalise these into proper newline-anchored markdown before parsing.
   function normaliseMarkdown(text) {
     let t = String(text || '');
@@ -242,6 +242,28 @@
     });
   }
   renderHistoricalAnswers();
+
+  // Sidebar delete button — soft-delete (trace data preserved per D-015).
+  document.querySelectorAll('.conv-delete').forEach(btn => {
+    btn.addEventListener('click', async ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const ref = btn.dataset.convRef;
+      if (!ref) return;
+      if (!confirm('Hide this conversation from the sidebar?\n\nThe full trace history (events, tool calls, RBAC decisions) is preserved for audit and can still be found via /traces.')) return;
+      const resp = await fetch(`/conversations/${encodeURIComponent(ref)}`, {method: 'DELETE'});
+      if (!resp.ok) {
+        alert('Could not delete: ' + resp.status);
+        return;
+      }
+      const wrap = btn.closest('.conv-item-wrap');
+      if (wrap) wrap.remove();
+      // If the user just deleted the active conversation, redirect to a fresh chat.
+      if (ref === document.body.dataset.conversationRef) {
+        location.href = '/chat';
+      }
+    });
+  });
 
   // If the server restored a stale-pending proposed action from PostgreSQL,
   // render the Confirm card on page load. The HMAC token has already been
@@ -446,6 +468,13 @@
   function renderTraceMeta(answerRegion, r) {
     const cost = (r.cost_usd || 0).toFixed(4);
     const sec = ((r.latency_ms || 0) / 1000).toFixed(1);
+    const planModel = r.plan_model || '';
+    const narrationModel = r.narration_model || r.model || '';
+    const routeSource = r.route_source ? ` (${r.route_source})` : '';
+    const modelText = r.provider === 'auto'
+      ? `auto${r.route ? ':' + r.route : ''}${routeSource} → plan ${planModel || 'n/a'} / answer ${narrationModel || 'n/a'}`
+      : `${r.provider} → ${narrationModel || r.model || 'unknown'}`;
+    const externalText = r.used_external_llm ? 'cloud used' : 'local only';
     answerRegion.insertAdjacentHTML('beforeend', `
       <div class="trace-meta">
         <span class="${badgeClass(r.badge)}">${escape(r.badge)}</span>
@@ -454,7 +483,8 @@
         <span class="sep">·</span>$${cost}
         <span class="sep">·</span>${r.total_tokens || 0} tokens
         <span class="sep">·</span>${sec}s
-        <span class="sep">·</span>${escape(r.provider)}
+        <span class="sep">·</span>${escape(modelText)}
+        <span class="sep">·</span>${escape(externalText)}
       </div>`);
   }
 

@@ -55,4 +55,10 @@ class ChatResponse(BaseModel):
     latency_ms: int = 0
     provider: str = 'auto'
     model: str = ''
+    plan_model: str = ''
+    narration_model: str = ''
+    route: str | None = None
+    route_confidence: float | None = None
+    route_source: str | None = None
+    used_external_llm: bool = False
     query_redacted: str = ''

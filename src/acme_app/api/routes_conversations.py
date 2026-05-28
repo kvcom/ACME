@@ -8,7 +8,7 @@ archive (ChatGPT-style). We keep:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +19,22 @@ from acme_app.infrastructure.db.session import get_db_session
 
 
 router = APIRouter(prefix='/conversations', tags=['conversations'])
+
+
+@router.delete('/{conversation_ref}')
+async def delete_conversation(
+    conversation_ref: str,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    """Soft-delete a conversation. The underlying audit trail (agent_traces,
+    trace_events, tool_call_logs, rbac_decisions) is preserved per the
+    Decision Ledger principle. Only the user-facing visibility is removed.
+    See DECISION_LOG D-015."""
+    ok = await repo.soft_delete_conversation(session, conversation_ref, user.username)
+    if not ok:
+        raise HTTPException(status_code=404, detail='conversation not found or already deleted')
+    return {'deleted': True, 'conversation_ref': conversation_ref, 'soft': True}
 
 
 @router.get('')

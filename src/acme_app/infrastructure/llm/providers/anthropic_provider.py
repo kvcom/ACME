@@ -153,7 +153,7 @@ class AnthropicProvider(LLMProvider):
         start = time.perf_counter()
         resp = await self._client.messages.create(
             model=self.model,
-            max_tokens=512,
+            max_tokens=2048,
             system=system_prompt + '\nGround every claim in the provided facts. Do not invent details.',
             messages=[{'role': 'user', 'content': f'{user_prompt}\n\nFacts:\n{json.dumps(facts, default=str)[:6000]}'}],
         )

@@ -68,7 +68,7 @@ class OllamaProvider(LLMProvider):
             system=system_prompt + '\nGround every claim in the provided facts.',
             user=f'{user_prompt}\n\nFacts:\n{json.dumps(facts, default=str)[:6000]}',
             want_json=False,
-            max_tokens=512,
+            max_tokens=2048,
         )
         return LLMResponse(
             text=text, prompt_tokens=pt, completion_tokens=ct,

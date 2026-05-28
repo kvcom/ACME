@@ -18,7 +18,7 @@ def estimate_cost(model_key: str, prompt_tokens: int, completion_tokens: int) ->
 PRICING = {
     'auto': {'input_per_1k': 0.0, 'output_per_1k': 0.0},
     'anthropic': {'input_per_1k': 0.003, 'output_per_1k': 0.015},
-    'openai': {'input_per_1k': 0.0025, 'output_per_1k': 0.01},
-    'google': {'input_per_1k': 0.00125, 'output_per_1k': 0.005},
+    'openai': {'input_per_1k': 0.005, 'output_per_1k': 0.03},
+    'google': {'input_per_1k': 0.002, 'output_per_1k': 0.012},
     'ollama': {'input_per_1k': 0.0, 'output_per_1k': 0.0},
 }

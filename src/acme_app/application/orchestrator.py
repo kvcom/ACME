@@ -35,6 +35,7 @@ from acme_app.application.prompts import NARRATION_PREAMBLE
 from acme_app.application.schemas import ChatResponse, ProposedActionDTO
 from acme_app.domain.evidence import badge_for
 from acme_app.infrastructure.db import repositories as repo
+from acme_app.infrastructure.llm.model_registry import MODEL_REGISTRY
 from acme_app.infrastructure.llm.provider import get_provider
 from acme_app.infrastructure.mcp_client.client import MCPClient, MCPClientError
 from acme_app.infrastructure.mcp_client.schemas import WRITE_TOOLS
@@ -59,7 +60,18 @@ _KNOWN_CUSTOMERS = (
     'BlueRiver Health', 'Skyline Aviation',
 )
 _ISSUE_REF_RE = re.compile(r'\bISS-\d{3,5}\b', re.I)
-
+_WRITE_INTENT_RE = re.compile(
+    r'\b('
+    r'create|prepare|propose|draft|stage|schedule|assign|'
+    r'add|make|submit|write up|set up'
+    r')\b',
+    re.I,
+)
+_OPEN_WRITE_INTENT_RE = re.compile(
+    r'\b(open|file|log|raise)\s+(an?\s+)?'
+    r'(action|ticket|case|issue|task|next action|recovery plan)\b',
+    re.I,
+)
 
 async def _load_recent_turns_with_pg_fallback(
     session: AsyncSession,
@@ -115,6 +127,27 @@ def _new_trace_ref() -> str:
 
 def _summarise(output: dict[str, Any]) -> dict[str, Any]:
     return ledger_mod.summarise_output(output)
+
+
+def _explicit_write_intent(query: str) -> bool:
+    """Only stage proposed actions when the user's wording asks for a write."""
+    return bool(_WRITE_INTENT_RE.search(query) or _OPEN_WRITE_INTENT_RE.search(query))
+
+
+def _model_key_for_cost(model_name: str, fallback_key: str) -> str:
+    for key, spec in MODEL_REGISTRY.items():
+        if spec.model == model_name or spec.key == model_name:
+            return key
+    return fallback_key
+
+
+def _external_llm_used(plan_model: str, narration_model: str, route_source: str | None) -> bool:
+    model_used = any(
+        model and not model.startswith(('llama', 'qwen'))
+        for model in (plan_model, narration_model)
+    )
+    arbiter_used = bool(route_source and route_source.startswith('arbiter:'))
+    return model_used or arbiter_used
 
 
 async def _emit(sink: EventSink, name: str, payload: dict[str, Any]) -> None:
@@ -343,6 +376,15 @@ async def run_agent(
                 cumulative_evidence.extend(skill_output.get('evidence', []))
 
         proposed_dto: ProposedActionDTO | None = None
+        write_intent = _explicit_write_intent(query)
+        if plan.write_requested and not plan.requires_clarification and not write_intent:
+            ledger.event(
+                'agent_plan',
+                'write_request.suppressed',
+                {'reason': 'user query did not explicitly ask to create/propose an action'},
+            )
+            plan.write_requested = False
+
         if plan.write_requested and not plan.requires_clarification:
             proposed_dto = await _maybe_propose(
                 ledger=ledger, role=role, username=username,
@@ -384,11 +426,28 @@ async def run_agent(
             has_evidence = bool(cumulative_evidence) or bool(facts.get('skill_output'))
             badge = badge_for(has_evidence=has_evidence)
 
+        plan_model = llm_plan_response.model or ''
+        narration_model = narration_response.model or plan_model
+        plan_model_key = _model_key_for_cost(plan_model, provider_name)
+        narration_model_key = _model_key_for_cost(narration_model, provider_name)
         prompt_tokens = llm_plan_response.prompt_tokens + narration_response.prompt_tokens
         completion_tokens = llm_plan_response.completion_tokens + narration_response.completion_tokens
-        cost_usd = compute_cost(provider_name, prompt_tokens, completion_tokens)
+        cost_usd = (
+            compute_cost(plan_model_key, llm_plan_response.prompt_tokens, llm_plan_response.completion_tokens)
+            + compute_cost(narration_model_key, narration_response.prompt_tokens, narration_response.completion_tokens)
+        )
         llm_latency = llm_plan_response.latency_ms + narration_response.latency_ms
         skill_output = facts.get('skill_output') or {}
+        auto_route = None
+        auto_route_confidence = None
+        auto_route_source = None
+        if provider_name == 'auto':
+            route_decision = getattr(get_provider('auto'), 'last_route', None)
+            if route_decision is not None:
+                auto_route = getattr(route_decision, 'route', None)
+                auto_route_confidence = getattr(route_decision, 'confidence', None)
+                auto_route_source = getattr(route_decision, 'source', None)
+        used_external_llm = _external_llm_used(plan_model, narration_model, auto_route_source)
 
         # Order matters: the conversation row MUST exist before insert_trace runs,
         # otherwise the FK lookup in repositories.insert_trace returns NULL and the
@@ -404,7 +463,7 @@ async def run_agent(
             final_answer=answer,
             final_status=badge,
             llm_provider=provider_name,
-            llm_model=narration_response.model or llm_plan_response.model,
+            llm_model=narration_model,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             estimated_cost_usd=cost_usd,
@@ -427,6 +486,12 @@ async def run_agent(
             'trace_ref': trace_ref, 'badge': badge, 'answer': answer,
             'cost_usd': cost_usd, 'total_tokens': prompt_tokens + completion_tokens,
             'latency_ms': latency_ms,
+            'plan_model': plan_model,
+            'narration_model': narration_model,
+            'route': auto_route,
+            'route_confidence': auto_route_confidence,
+            'route_source': auto_route_source,
+            'used_external_llm': used_external_llm,
         })
 
         return ChatResponse(
@@ -444,7 +509,13 @@ async def run_agent(
             total_tokens=prompt_tokens + completion_tokens,
             latency_ms=latency_ms,
             provider=provider_name,
-            model=narration_response.model or llm_plan_response.model,
+            model=narration_model,
+            plan_model=plan_model,
+            narration_model=narration_model,
+            route=auto_route,
+            route_confidence=auto_route_confidence,
+            route_source=auto_route_source,
+            used_external_llm=used_external_llm,
             query_redacted=query_redacted,
         )
 

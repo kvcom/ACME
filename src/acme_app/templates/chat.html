@@ -108,6 +108,20 @@
     }
     .new-conv-btn:hover { background: var(--bg-surface-raised); color: var(--text-primary); }
 
+    /* Conversation row with hover-to-reveal delete affordance. */
+    .conv-item-wrap { position: relative; }
+    .conv-item-wrap.active .conv-item { background: var(--bg-surface-raised); border: 1px solid var(--border-medium); }
+    .conv-delete {
+      position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+      width: 22px; height: 22px; padding: 0;
+      display: grid; place-items: center; cursor: pointer;
+      background: transparent; border: 0; border-radius: 4px;
+      color: var(--text-dim); opacity: 0;
+      transition: opacity 100ms, color 100ms, background 100ms;
+    }
+    .conv-item-wrap:hover .conv-delete { opacity: 1; }
+    .conv-delete:hover { color: var(--color-danger-dim); background: var(--color-danger-bg); }
+
     /* ── Welcome state ────────────────────────────────────────────────── */
     .welcome {
       width: 100%; max-width: 740px;
@@ -225,12 +239,22 @@
         <div class="conv-group">
           <div class="label" style="margin: 8px 4px 6px;">{{ group_name }}</div>
           {% for c in rows %}
-          <a class="conv-item {% if c.conversation_ref == conversation_ref %}active{% endif %}"
-             data-conv-title="{{ (c.title or c.conversation_ref) | lower }}"
-             href="/chat?conversation_ref={{ c.conversation_ref }}">
-            <div class="title">{% if c.pending %}<span class="pending-dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-right:6px;"></span>{% endif %}{{ c.title or c.conversation_ref }}</div>
-            <div class="meta">{{ c.when }}{% if c.badge %} · <span class="badge badge-{{ c.badge_class }}" style="font-size:8px;padding:1px 5px;">{{ c.badge }}</span>{% endif %}</div>
-          </a>
+          <div class="conv-item-wrap {% if c.conversation_ref == conversation_ref %}active{% endif %}">
+            <a class="conv-item"
+               data-conv-title="{{ (c.title or c.conversation_ref) | lower }}"
+               href="/chat?conversation_ref={{ c.conversation_ref }}">
+              <div class="title">{% if c.pending %}<span class="pending-dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-right:6px;"></span>{% endif %}{{ c.title or c.conversation_ref }}</div>
+              <div class="meta">{{ c.when }}{% if c.badge %} · <span class="badge badge-{{ c.badge_class }}" style="font-size:8px;padding:1px 5px;">{{ c.badge }}</span>{% endif %}</div>
+            </a>
+            <button type="button" class="conv-delete"
+                    data-conv-ref="{{ c.conversation_ref }}"
+                    title="Hide from sidebar (trace history is preserved)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="11" height="11">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+            </button>
+          </div>
           {% endfor %}
         </div>
         {% endfor %}

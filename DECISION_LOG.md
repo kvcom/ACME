@@ -113,3 +113,19 @@ Each entry: D-NNN, the choice, why, and the production replacement.
 **Why**: Makes "AI recommends, policy executes" visible in network traffic and trace events, not just in code comments. Borrowed from myTbot.
 
 **Production**: Same model. Add a separate approval state machine for high-side-effect actions that require multi-step approval.
+
+## D-015 · Conversation deletion is soft-delete only — audit trail is preserved
+
+**Choice**: The sidebar's "delete" affordance sets `conversations.deleted_at = now()`. The underlying `agent_traces`, `trace_events`, `tool_call_logs`, `rbac_decisions` and `next_actions` rows are never touched.
+
+**Why**: The Decision Ledger principle from plan_v2 §2.5 ("every agent action records who acted, why, on what evidence, under what permissions, with what outcome") makes those tables the durable record. Letting a user hard-delete them would mean an operator could *retroactively erase the basis on which an action was created* — which breaks the auditability story the panel hears. Soft-delete gives the user the UX affordance they expect (the chat disappears from the sidebar, doesn't clutter the list) without destroying the ledger.
+
+**Implementation details**:
+- `conversation_list` filters `WHERE deleted_at IS NULL`.
+- `get_conversation_history` does **not** filter — pulling up a trace by its `trace_ref` still works even after the parent conversation is hidden, so the audit path keeps functioning.
+- `soft_delete_conversation` is scoped to the conversation's `username`, so a user can only hide their own threads.
+- PII redaction (D-012) already runs at write time, so the preserved trace contains the redacted query — the privacy-vs-audit balance is held by the redactor, not by deletion.
+
+**Production**: Same model. Two additional doors:
+- **Compliance hard-delete** (GDPR Article 17): admin-only endpoint that wipes a single user's traces; protected by a multi-party-approval workflow because it crosses the audit boundary. Log the deletion itself as an "audit-erasure" event so even the act of forgetting is on the ledger.
+- **Retention policy**: time-based purge of `deleted_at` records older than N years — but again, *not* of the underlying traces, which graduate to cold archive.
