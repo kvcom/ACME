@@ -75,7 +75,7 @@ When the boot completes (60–90 s, mostly Keycloak):
 - Keycloak admin: <http://localhost:8080> (admin / admin)
 - MCP server: <http://localhost:8001/docs>
 - PostgreSQL: localhost:5432 (acme / acme)
-- Redis: localhost:6379
+- Redis: Docker-internal `redis:6379`; Windows tools such as RedisInsight: `127.0.0.1:6380`
 
 ```bash
 docker compose ps                       # health overview
@@ -129,6 +129,8 @@ The adversarial check fires, the planner routes to a refusal, no tools are calle
 
 - **PostgreSQL is the business truth**: customers, issues, next_actions, conversations, agent_traces, trace_events, tool_call_logs, rbac_decisions, eval_runs, eval_results. If PostgreSQL is unavailable the app returns 503.
 - **Redis is working memory**: recent turns, last referenced customer/issue, pending proposed action with TTL, customer-lookup cache, tool-result cache. If Redis is unavailable the app still answers fresh queries but loses follow-up references like *"that action"*.
+
+Acme services inside Docker use `redis:6379` via `REDIS_URL=redis://redis:6379/0`. Local Windows tools should connect to Acme Redis at `127.0.0.1:6380` with no username, no password, and TLS off. Avoid `127.0.0.1:6379` for this project because that host port may belong to another local Redis instance, such as myTbot.
 
 ## MCP design
 
