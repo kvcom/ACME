@@ -14,6 +14,18 @@ class KeycloakError(Exception):
     pass
 
 
+class KeycloakLoginRejected(KeycloakError):
+    pass
+
+
+class KeycloakAccountNotReady(KeycloakError):
+    pass
+
+
+class KeycloakUnavailable(KeycloakError):
+    pass
+
+
 async def login(username: str, password: str) -> dict:
     url = f'{settings.keycloak_url}/realms/{settings.keycloak_realm}/protocol/openid-connect/token'
     payload = {
@@ -28,10 +40,13 @@ async def login(username: str, password: str) -> dict:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(url, data=payload)
             if response.status_code >= 400:
-                raise KeycloakError(f'login failed ({response.status_code}): {response.text[:200]}')
+                body = response.text[:200]
+                if 'Account is not fully set up' in body:
+                    raise KeycloakAccountNotReady(f'login failed ({response.status_code}): {body}')
+                raise KeycloakLoginRejected(f'login failed ({response.status_code}): {body}')
             return response.json()
     except httpx.HTTPError as exc:
-        raise KeycloakError(f'Keycloak transport error: {exc}') from exc
+        raise KeycloakUnavailable(f'Keycloak transport error: {exc}') from exc
 
 
 async def health() -> bool:

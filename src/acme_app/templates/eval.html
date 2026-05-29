@@ -61,7 +61,7 @@
 <div class="page">
 
   <header class="topbar">
-    <div class="brand"><span class="brand-mark">ACME · OPS</span></div>
+    <div class="brand"><span class="brand-mark">ACME<span class="dot">·</span>OPS</span></div>
     <nav class="nav">
       <a href="/chat">Chat</a>
       <a href="/traces">Traces</a>
@@ -71,6 +71,7 @@
     {% if user %}
     <span class="mono" style="font-size:11px; color: var(--text-secondary);">{{ user.username }}</span>
     <span class="badge {% if user.primary_role == 'support_user' %}badge-accent{% elif user.primary_role == 'admin' %}badge-needsreview{% else %}badge-neutral{% endif %}" style="font-size:9px;">{{ user.primary_role }}</span>
+    <span class="badge {% if user.auth_source == 'keycloak' %}badge-grounded{% else %}badge-neutral{% endif %}" style="font-size:9px;">auth: {{ user.auth_source }}</span>
     {% endif %}
   </header>
 

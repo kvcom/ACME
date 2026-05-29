@@ -116,6 +116,10 @@ body {
   letter-spacing: 0.06em;
   color: var(--text-primary);
 }
+.topbar .brand-mark .dot {
+  color: var(--accent);
+  padding: 0 2px;
+}
 .topbar .brand-tag {
   font-family: var(--font-mono);
   font-size: 9px;

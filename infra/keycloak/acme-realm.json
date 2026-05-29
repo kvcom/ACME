@@ -28,6 +28,7 @@
     {
       "username": "sarah.sales",
       "enabled": true,
+      "email": "sarah.sales@example.local",
       "emailVerified": true,
       "firstName": "Sarah",
       "lastName": "Sales",
@@ -37,6 +38,7 @@
     {
       "username": "sam.support",
       "enabled": true,
+      "email": "sam.support@example.local",
       "emailVerified": true,
       "firstName": "Sam",
       "lastName": "Support",
@@ -46,6 +48,7 @@
     {
       "username": "admin.acme",
       "enabled": true,
+      "email": "admin.acme@example.local",
       "emailVerified": true,
       "firstName": "Admin",
       "lastName": "Acme",

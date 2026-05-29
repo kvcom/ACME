@@ -11,7 +11,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from acme_app.auth.current_user import CurrentUser, _encode_session, get_current_user, user_from_token
-from acme_app.auth.keycloak_client import KeycloakError, login as keycloak_login
+from acme_app.auth.keycloak_client import (
+    KeycloakAccountNotReady,
+    KeycloakLoginRejected,
+    KeycloakUnavailable,
+    login as keycloak_login,
+)
 from acme_app.config import settings
 
 
@@ -30,6 +35,19 @@ class LoginInput(BaseModel):
     password: str
 
 
+def _friendly_login_error(error: str | None) -> str:
+    if not error:
+        return 'Could not sign you in. Check your username and password.'
+    lowered = error.lower()
+    if 'invalid_grant' in lowered or 'invalid user credentials' in lowered or 'login failed (401)' in lowered:
+        return 'Username or password is incorrect.'
+    if 'fallback is disabled' in lowered or 'keycloak unavailable' in lowered or 'transport error' in lowered:
+        return 'Sign-in service is unavailable. Please try again in a moment.'
+    if 'no supported role' in lowered:
+        return 'Your account does not have access to this app.'
+    return 'Could not sign you in. Check your username and password.'
+
+
 @router.get('/login', response_class=HTMLResponse)
 async def login_page(request: Request, next: str = Query(default='/chat')) -> HTMLResponse:
     return request.app.state.templates.TemplateResponse(request, 'login.html', {'error': None, 'next': next})
@@ -45,7 +63,7 @@ async def login_form(
     user, error = await _resolve_login(username, password)
     if user is None:
         return request.app.state.templates.TemplateResponse(
-            request, 'login.html', {'error': error or 'Invalid credentials', 'next': next}, status_code=401,
+            request, 'login.html', {'error': _friendly_login_error(error), 'next': next}, status_code=401,
         )
     destination = next if next.startswith('/') else '/chat'
     response = RedirectResponse(url=destination, status_code=303)
@@ -63,7 +81,7 @@ async def login_form(
 async def auth_login(payload: LoginInput) -> dict:
     user, error = await _resolve_login(payload.username, payload.password)
     if user is None:
-        raise HTTPException(status_code=401, detail=error or 'Invalid credentials')
+        raise HTTPException(status_code=401, detail=_friendly_login_error(error))
     return {
         'subject': user.subject, 'username': user.username, 'roles': user.roles,
         'access_token': user.access_token or 'demo-cookie-session',
@@ -72,7 +90,12 @@ async def auth_login(payload: LoginInput) -> dict:
 
 @router.get('/auth/me')
 async def auth_me(user: CurrentUser = Depends(get_current_user)) -> dict:
-    return {'subject': user.subject, 'username': user.username, 'roles': user.roles}
+    return {
+        'subject': user.subject,
+        'username': user.username,
+        'roles': user.roles,
+        'auth_source': user.auth_source,
+    }
 
 
 @router.post('/logout')
@@ -92,12 +115,18 @@ async def _resolve_login(username: str, password: str) -> tuple[CurrentUser | No
                 return user_from_token(access_token), None
             except HTTPException as exc:
                 return None, exc.detail
-    except KeycloakError:
+    except KeycloakLoginRejected as exc:
+        return None, str(exc)
+    except KeycloakAccountNotReady:
         pass
+    except KeycloakUnavailable:
+        pass
+    if not settings.demo_auth_fallback_enabled:
+        return None, 'Keycloak unavailable and demo auth fallback is disabled'
     demo = DEMO_USERS.get(username)
     if demo and demo['password'] == password:
         return CurrentUser(
             subject=f'demo-{username}', username=username,
-            roles=list(demo['roles']), access_token='',
+            roles=list(demo['roles']), access_token='', auth_source='demo_fallback',
         ), None
     return None, 'Invalid credentials'

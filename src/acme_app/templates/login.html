@@ -75,14 +75,14 @@
     <div class="wordmark">ACME<span class="dot">·</span>OPS</div>
     <div class="tagline">Operations assistant</div>
 
-    <form method="post" action="/login{% if next %}?next={{ next }}{% endif %}">
+    <form method="post" action="/login{% if next %}?next={{ next }}{% endif %}" autocomplete="off">
       <div class="field">
         <label for="u">Username</label>
-        <input id="u" name="username" type="text" placeholder="sarah.sales" autocomplete="username" required/>
+        <input id="u" name="username" type="text" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false" required/>
       </div>
       <div class="field">
         <label for="p">Password</label>
-        <input id="p" name="password" type="password" placeholder="••••••••" autocomplete="current-password" required/>
+        <input id="p" name="password" type="password" placeholder="password" autocomplete="new-password" required/>
       </div>
       {% if error %}<div class="err">{{ error }}</div>{% endif %}
       <button class="submit" type="submit">Sign in</button>
@@ -115,8 +115,8 @@
     </button>
 
     <p class="footnote">
-      Direct-grant Keycloak login for demo simplicity.<br/>
-      Production would use Authorization Code with PKCE.
+      Demo identities only. Keycloak is tried first; local fallback exists for offline demos.<br/>
+      Production would remove demo credentials and use Authorization Code with PKCE.
     </p>
   </div>
 

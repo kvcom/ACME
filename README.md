@@ -85,13 +85,17 @@ docker compose down -v                  # tear down and wipe data
 
 ## Demo users
 
+These are local demonstration identities for the technical assessment, not production credentials. The login route tries Keycloak first; the hard-coded fallback exists only so the demo still works if the local Keycloak container is unavailable.
+
 | Username | Password | Role | What they can do |
 |---|---|---|---|
 | `sarah.sales` | `password` | sales_user | Read only; receives recommendations but cannot write |
 | `sam.support` | `password` | support_user | Read + propose-confirm writes on most actions |
 | `admin.acme` | `password` | admin | Full read/write under propose-confirm, including cancel |
 
-If Keycloak is unavailable, the `/login` endpoint falls back to a demo cookie session with the same role envelope (see [DECISION_LOG.md](DECISION_LOG.md) D-005).
+Production replacement: remove the fallback table, seed users only in the identity provider, enforce Authorization Code with PKCE, verify JWTs against JWKS, use short-lived access tokens with refresh rotation, and keep sessions server-side or in signed secure cookies. See [DECISION_LOG.md](DECISION_LOG.md) D-003 to D-005.
+
+To make the demo path auditable, the app header and `/auth/me` expose the resolved auth source: `auth: keycloak` when a Keycloak token backed the session, or `auth: demo_fallback` only when the local fallback was used. Wrong credentials do not fall back to the demo table. Set `DEMO_AUTH_FALLBACK_ENABLED=false` to disable the fallback entirely and require live Keycloak authentication.
 
 ## Key workflows
 

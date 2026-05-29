@@ -36,6 +36,7 @@ class Settings(BaseSettings):
 
     confirmation_hmac_secret: str = 'dev-only-secret-change-me'
     debug_endpoints_enabled: bool = True
+    demo_auth_fallback_enabled: bool = True
     demo_session_max_age_seconds: int = 8 * 3600
 
 

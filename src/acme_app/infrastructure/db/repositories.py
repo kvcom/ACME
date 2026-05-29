@@ -168,12 +168,22 @@ async def insert_rbac_decision(
     """), {'t': trace_id, 'u': username, 'r': role, 'op': operation, 'res': resource, 'a': allowed, 'why': reason})
 
 
-async def list_traces(session: AsyncSession, limit: int = 50) -> list[dict[str, Any]]:
-    rows = (await session.execute(text("""
+async def list_traces(
+    session: AsyncSession,
+    limit: int = 50,
+    username: str | None = None,
+) -> list[dict[str, Any]]:
+    where = 'WHERE username = :username' if username else ''
+    params: dict[str, Any] = {'n': limit}
+    if username:
+        params['username'] = username
+    rows = (await session.execute(text(f"""
         SELECT trace_ref, username, user_role, detected_intent, final_status,
                llm_provider, llm_model, total_tokens, estimated_cost_usd, total_latency_ms, created_at
-        FROM agent_traces ORDER BY created_at DESC LIMIT :n
-    """), {'n': limit})).all()
+        FROM agent_traces
+        {where}
+        ORDER BY created_at DESC LIMIT :n
+    """), params)).all()
     return [
         {
             'trace_ref': r[0], 'username': r[1], 'role': r[2], 'intent': r[3], 'status': r[4],

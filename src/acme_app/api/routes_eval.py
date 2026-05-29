@@ -4,13 +4,13 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from acme_app.api._view_helpers import badge_class_for
-from acme_app.auth.current_user import CurrentUser, get_optional_user
+from acme_app.auth.current_user import CurrentUser, get_current_user
 from acme_app.config import settings
 from acme_app.infrastructure.db.session import get_db_session
 
@@ -27,6 +27,12 @@ _BADGE_FROM_NOTES = {
     'proposed': 'Action Proposed',
     'grounded': 'Grounded',
 }
+
+
+def _require_admin(user: CurrentUser) -> CurrentUser:
+    if 'admin' not in user.roles:
+        raise HTTPException(status_code=403, detail='Admin role required')
+    return user
 
 
 def _badge_for_case(case_id: str, expected_status: str | None) -> str:
@@ -118,9 +124,10 @@ async def _latest_run_summary(session: AsyncSession) -> tuple[dict[str, Any], li
 @router.get('', response_class=HTMLResponse)
 async def eval_page(
     request: Request,
-    user: CurrentUser | None = Depends(get_optional_user),
+    user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> HTMLResponse:
+    _require_admin(user)
     try:
         summary, cases = await _latest_run_summary(session)
     except Exception:
@@ -133,6 +140,7 @@ async def eval_page(
 
 
 @router.get('/latest')
-async def latest_eval() -> dict:
+async def latest_eval(user: CurrentUser = Depends(get_current_user)) -> dict:
+    _require_admin(user)
     p = Path('EVAL_RESULTS.md')
     return {'exists': p.exists(), 'content': p.read_text(encoding='utf-8') if p.exists() else ''}

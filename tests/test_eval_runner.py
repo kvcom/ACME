@@ -1,6 +1,10 @@
 from acme_app.evaluation.eval_cases import EVAL_CASES
 from acme_app.evaluation.scoring import score
 from acme_app.evaluation.variance import aggregate
+from acme_app.api.routes_eval import _require_admin
+from acme_app.auth.current_user import CurrentUser
+from fastapi import HTTPException
+import pytest
 
 
 def test_thirteen_cases():
@@ -59,3 +63,13 @@ def test_variance_aggregation():
     out = aggregate(rows)
     assert out['case_1']['pass_rate'] == '1/2'
     assert 'tool_selection_pass' in out['case_1']['variance_axes']
+
+
+def test_eval_requires_admin_role():
+    admin = CurrentUser(subject='1', username='admin.acme', roles=['admin'])
+    sales = CurrentUser(subject='2', username='sarah.sales', roles=['sales_user'])
+
+    assert _require_admin(admin) is admin
+    with pytest.raises(HTTPException) as exc:
+        _require_admin(sales)
+    assert exc.value.status_code == 403

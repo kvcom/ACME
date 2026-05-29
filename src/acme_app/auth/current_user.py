@@ -24,6 +24,7 @@ class CurrentUser:
     username: str
     roles: list[str]
     access_token: str = ''
+    auth_source: str = 'keycloak'
 
     @property
     def primary_role(self) -> str:
@@ -40,6 +41,7 @@ def _encode_session(user: CurrentUser) -> str:
         'u': user.username,
         'r': user.roles,
         't': user.access_token,
+        's': user.auth_source,
         'exp': int(time.time()) + settings.demo_session_max_age_seconds,
     }).encode()
     return base64.urlsafe_b64encode(raw).decode()
@@ -52,7 +54,14 @@ def _decode_session(token: str) -> CurrentUser | None:
         expires_at = int(data.get('exp') or 0)
         if not expires_at or expires_at < int(time.time()):
             return None
-        return CurrentUser(subject=data['sub'], username=data['u'], roles=list(data['r']), access_token=data.get('t', ''))
+        auth_source = str(data.get('s') or ('keycloak' if data.get('t') else 'demo_fallback'))
+        return CurrentUser(
+            subject=data['sub'],
+            username=data['u'],
+            roles=list(data['r']),
+            access_token=data.get('t', ''),
+            auth_source=auth_source,
+        )
     except Exception:
         return None
 
@@ -71,6 +80,7 @@ def user_from_token(token: str) -> CurrentUser:
         username=str(claims.get('preferred_username', 'unknown')),
         roles=roles,
         access_token=token,
+        auth_source='keycloak',
     )
 
 

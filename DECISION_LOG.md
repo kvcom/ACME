@@ -36,11 +36,13 @@ Each entry: D-NNN, the choice, why, and the production replacement.
 
 ## D-005 · Demo cookie session as a fallback when Keycloak is unavailable
 
-**Choice**: `/login` first tries Keycloak; on transport failure it falls back to a hard-coded demo user table and issues a base64-encoded session cookie with the same role envelope.
+**Choice**: `/login` first tries Keycloak; on transport failure it falls back to a small hard-coded demo user table and issues a short-lived demo cookie session with the same role envelope.
 
-**Why**: Demos fail when third-party services flake. A fallback that uses only the three pre-defined demo users keeps the panel demo robust without weakening the realm-based RBAC story.
+**Why**: Demos fail when local services flake. A fallback that uses only the three pre-defined, non-secret demo users keeps the panel demo robust without weakening the server-side RBAC story. The UI labels these as demo identities, and the fallback is intentionally documented here as a prototype trade-off.
 
-**Production**: Remove the fallback entirely. Production users authenticate exclusively through Keycloak.
+**Assurance**: The authenticated user carries an `auth_source` value that is surfaced in the UI header and `/auth/me`. Wrong credentials stop the login; only Keycloak transport/unavailability or local imported-user setup issues can trigger the fallback. `DEMO_AUTH_FALLBACK_ENABLED=false` disables the fallback entirely for live-Keycloak demonstrations.
+
+**Production**: Remove the fallback entirely. Production users authenticate exclusively through Keycloak or an enterprise IdP; demo users are seeded in the IdP for test environments only, never as application code credentials.
 
 ## D-006 · Deterministic risk classification, LLM-narrated explanation
 

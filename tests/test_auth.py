@@ -1,5 +1,8 @@
+import pytest
+
 from acme_app.auth.current_user import CurrentUser, _decode_session, _encode_session
 from acme_app.auth.jwt_validator import extract_roles
+from acme_app.api.routes_auth import _friendly_login_error
 
 
 def test_session_roundtrip():
@@ -9,6 +12,20 @@ def test_session_roundtrip():
     assert decoded is not None
     assert decoded.username == 'sam.support'
     assert decoded.roles == ['support_user']
+    assert decoded.auth_source == 'keycloak'
+
+
+def test_demo_session_roundtrip_keeps_auth_source():
+    user = CurrentUser(
+        subject='demo-sam.support',
+        username='sam.support',
+        roles=['support_user'],
+        auth_source='demo_fallback',
+    )
+    decoded = _decode_session(_encode_session(user))
+
+    assert decoded is not None
+    assert decoded.auth_source == 'demo_fallback'
 
 
 def test_primary_role_order():
@@ -21,6 +38,19 @@ def test_primary_role_order():
 def test_extract_roles_filters_unknown():
     claims = {'realm_access': {'roles': ['admin', 'random_role', 'support_user']}}
     assert sorted(extract_roles(claims)) == ['admin', 'support_user']
+
+
+def test_friendly_login_error_hides_keycloak_json():
+    raw = 'login failed (401): {"error":"invalid_grant","error_description":"Invalid user credentials"}'
+
+    assert _friendly_login_error(raw) == 'Username or password is incorrect.'
+
+
+def test_friendly_login_error_for_unavailable_service():
+    assert (
+        _friendly_login_error('Keycloak unavailable and demo auth fallback is disabled')
+        == 'Sign-in service is unavailable. Please try again in a moment.'
+    )
 
 
 def test_decode_session_invalid_returns_none():
@@ -46,3 +76,75 @@ def test_decode_session_without_expiry_returns_none():
     cookie = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
 
     assert _decode_session(cookie) is None
+
+
+@pytest.mark.asyncio
+async def test_keycloak_rejection_does_not_fall_back_to_demo(monkeypatch):
+    from acme_app.api import routes_auth
+    from acme_app.auth.keycloak_client import KeycloakLoginRejected
+
+    async def rejected(_username, _password):
+        raise KeycloakLoginRejected('login failed (401)')
+
+    monkeypatch.setattr(routes_auth, 'keycloak_login', rejected)
+
+    user, error = await routes_auth._resolve_login('sarah.sales', 'password')
+
+    assert user is None
+    assert '401' in error
+
+
+@pytest.mark.asyncio
+async def test_keycloak_account_not_ready_uses_demo_fallback(monkeypatch):
+    from acme_app.api import routes_auth
+    from acme_app.auth.keycloak_client import KeycloakAccountNotReady
+    from acme_app.config import settings
+
+    async def not_ready(_username, _password):
+        raise KeycloakAccountNotReady('Account is not fully set up')
+
+    monkeypatch.setattr(routes_auth, 'keycloak_login', not_ready)
+    monkeypatch.setattr(settings, 'demo_auth_fallback_enabled', True)
+
+    user, error = await routes_auth._resolve_login('sarah.sales', 'password')
+
+    assert error is None
+    assert user is not None
+    assert user.auth_source == 'demo_fallback'
+
+
+@pytest.mark.asyncio
+async def test_keycloak_unavailable_uses_demo_fallback(monkeypatch):
+    from acme_app.api import routes_auth
+    from acme_app.auth.keycloak_client import KeycloakUnavailable
+    from acme_app.config import settings
+
+    async def unavailable(_username, _password):
+        raise KeycloakUnavailable('transport error')
+
+    monkeypatch.setattr(routes_auth, 'keycloak_login', unavailable)
+    monkeypatch.setattr(settings, 'demo_auth_fallback_enabled', True)
+
+    user, error = await routes_auth._resolve_login('sarah.sales', 'password')
+
+    assert error is None
+    assert user is not None
+    assert user.auth_source == 'demo_fallback'
+
+
+@pytest.mark.asyncio
+async def test_keycloak_unavailable_without_demo_fallback_denies(monkeypatch):
+    from acme_app.api import routes_auth
+    from acme_app.auth.keycloak_client import KeycloakUnavailable
+    from acme_app.config import settings
+
+    async def unavailable(_username, _password):
+        raise KeycloakUnavailable('transport error')
+
+    monkeypatch.setattr(routes_auth, 'keycloak_login', unavailable)
+    monkeypatch.setattr(settings, 'demo_auth_fallback_enabled', False)
+
+    user, error = await routes_auth._resolve_login('sarah.sales', 'password')
+
+    assert user is None
+    assert 'fallback is disabled' in error
