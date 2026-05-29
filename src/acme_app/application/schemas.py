@@ -55,6 +55,12 @@ class ResolutionRequiredDTO(BaseModel):
     options: list[ResolutionOptionDTO] = Field(default_factory=list)
 
 
+class ClarificationOptionDTO(BaseModel):
+    label: str
+    value: str
+    description: str = ''
+
+
 class ChatResponse(BaseModel):
     trace_ref: str
     intent: str | None = None
@@ -69,7 +75,7 @@ class ChatResponse(BaseModel):
     cost_usd: float = 0.0
     total_tokens: int = 0
     latency_ms: int = 0
-    provider: str = 'gpt-5.4-mini'
+    provider: str = 'claude-opus-4-8'
     model: str = ''
     plan_model: str = ''
     narration_model: str = ''
@@ -78,4 +84,5 @@ class ChatResponse(BaseModel):
     route_source: str | None = None
     used_external_llm: bool = False
     resolution_required: ResolutionRequiredDTO | None = None
+    clarification_options: list[ClarificationOptionDTO] = Field(default_factory=list)
     query_redacted: str = ''

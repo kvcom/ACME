@@ -18,11 +18,16 @@
   // Persisted model choice (localStorage), default to server-rendered value.
   // We store the model_key (e.g. "claude-sonnet-4") not the display label.
   const STORAGE_KEY = 'acme_model_key';
+  const PREVIOUS_DEFAULT_MODEL_KEYS = new Set(['gpt-5.4-mini']);
+  const serverDefaultModelKey = document.body.dataset.modelKey || 'stub';
   let currentModelKey = (() => {
-    try { return localStorage.getItem(STORAGE_KEY); } catch { return null; }
-  })() || document.body.dataset.modelKey || 'stub';
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      return PREVIOUS_DEFAULT_MODEL_KEYS.has(stored) ? null : stored;
+    } catch { return null; }
+  })() || serverDefaultModelKey;
   if (!document.querySelector(`.provider-opt[data-model-key="${CSS.escape(currentModelKey)}"]`)) {
-    currentModelKey = document.body.dataset.modelKey || document.querySelector('.provider-opt')?.dataset.modelKey || 'gpt-5.4-mini';
+    currentModelKey = serverDefaultModelKey || document.querySelector('.provider-opt')?.dataset.modelKey || 'claude-opus-4-8';
     try { localStorage.setItem(STORAGE_KEY, currentModelKey); } catch {}
   }
   try { setProvider(currentModelKey); } catch (e) { console.warn('[acme] setProvider failed', e); }
@@ -32,7 +37,25 @@
   }
   function modelKey() { return currentModelKey || 'stub'; }
   function convRef()  { return document.body.dataset.conversationRef || 'CONV-DEMO'; }
-  function badgeClass(b) { return 'badge badge-' + (b || '').toLowerCase().replace(/[\s_]+/g, '-').replace(/-+/g, '-'); }
+  const BADGE_CLASS = {
+    'Grounded': 'grounded',
+    'Partially Grounded': 'partial',
+    'Needs Review': 'needsreview',
+    'Permission Denied': 'denied',
+    'Action Proposed': 'proposed',
+    'Action Created': 'created',
+    'Action Cancelled': 'cancelled',
+    'Insufficient Evidence': 'insufficient',
+    'Clarification Required': 'clarify',
+    'Adversarial Input Blocked': 'adversarial',
+    'LLM Unavailable': 'needsreview',
+    'Resolution Required': 'needsreview',
+  };
+
+  function badgeClass(b) {
+    const suffix = BADGE_CLASS[b || ''] || 'neutral';
+    return `badge badge-${suffix}`;
+  }
 
   function setProvider(key) {
     currentModelKey = key;
@@ -401,41 +424,6 @@
     startTtl(pa.expires_at);
   }
 
-  function renderResolutionCard(resolution, originalQuery) {
-    if (!resolution) return;
-    clearRail();
-    const options = resolution.options || [];
-    railEl.insertAdjacentHTML('beforeend', `
-      <div class="action-card" data-role="resolution-card">
-        <div class="ah">
-          <div>
-            <div class="label" style="color: var(--accent-dim);">Resolution required</div>
-            <div class="mono" style="font-size:11px; color: var(--text-high); margin-top:2px;">${escape(resolution.title || 'Classification conflict')}</div>
-          </div>
-        </div>
-        <div class="ab">
-          <p style="font-size: 11px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 12px;">${escape(resolution.message || '')}</p>
-          <div class="action-row"><span class="k">Rules</span> <span class="v">${escape(resolution.rules?.route || '—')}</span></div>
-          <div class="action-row"><span class="k">Model</span> <span class="v">${escape(resolution.model?.route || '—')}</span></div>
-          <div style="margin-top: 12px; display: grid; gap: 8px;">
-            ${options.map(opt => `
-              <button class="btn btn-sm" data-resolution-route="${escape(opt.route)}" data-resolution-label="${escape(opt.label)}" style="justify-content:center;">
-                ${escape(opt.label)}
-              </button>
-            `).join('')}
-          </div>
-        </div>
-      </div>`);
-    railEl.querySelectorAll('[data-resolution-route]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const route = btn.dataset.resolutionRoute;
-        const label = btn.dataset.resolutionLabel || route;
-        clearRail();
-        send(originalQuery, {route, label, showUser: false});
-      });
-    });
-  }
-
   function startTtl(expiresAt) {
     const el = railEl.querySelector('[data-role="ttl-clock"]');
     if (!el || !expiresAt) return;
@@ -511,15 +499,164 @@
     answerRegion.insertAdjacentHTML('beforeend', `<p>${escape(r.answer).replace(/\n/g, '<br>')}</p>`);
   }
 
+  function renderClarificationOptions(answerRegion, r) {
+    const options = r.clarification_options || [];
+    if (!options.length) return;
+    const answer = answerRegion.querySelector('.md-answer');
+    if (answer) {
+      const lists = answer.querySelectorAll('ul');
+      const lastList = lists[lists.length - 1];
+      if (lastList && lastList.querySelectorAll('li').length === options.length) {
+        lastList.remove();
+      }
+    }
+    const wrap = document.createElement('ol');
+    wrap.className = 'clarification-options';
+    wrap.style.cssText = 'display:grid;gap:7px;margin:10px 0 4px;padding-left:22px;max-width:720px;';
+    options.forEach((opt, idx) => {
+      const li = document.createElement('li');
+      li.style.cssText = 'padding-left:4px;color:var(--text-dim);';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-sm';
+      btn.style.cssText = [
+        'justify-content:flex-start',
+        'width:fit-content',
+        'max-width:100%',
+        'height:26px',
+        'padding:4px 12px',
+        'border:1px solid var(--border-medium)',
+        'border-radius:var(--radius-full)',
+        'background:transparent',
+        'white-space:nowrap',
+        'overflow:hidden',
+        'text-overflow:ellipsis',
+        'text-align:left',
+        'line-height:1',
+      ].join(';');
+      btn.textContent = opt.description ? `${opt.label} · ${opt.description}` : opt.label;
+      btn.title = opt.value || opt.label;
+      btn.addEventListener('click', () => {
+        wrap.querySelectorAll('button').forEach((b, buttonIndex) => {
+          b.disabled = true;
+          b.style.cursor = 'default';
+          b.style.opacity = buttonIndex === idx ? '1' : '0.45';
+          if (buttonIndex === idx) {
+            b.style.borderColor = 'var(--accent-border)';
+            b.style.color = 'var(--text-primary)';
+          }
+        });
+        send(opt.value || opt.label);
+      }, {once: true});
+      li.appendChild(btn);
+      wrap.appendChild(li);
+    });
+    answerRegion.appendChild(wrap);
+  }
+
+  function renderResolutionOptions(answerRegion, r, originalQuery) {
+    const resolution = r.resolution_required;
+    const options = resolution?.options || [];
+    if (!options.length) return;
+    const prompt = document.createElement('p');
+    prompt.style.cssText = 'margin:10px 0 6px;color:var(--text-high);';
+    prompt.textContent = 'Which decision should I use?';
+    const wrap = document.createElement('ol');
+    wrap.className = 'clarification-options resolution-options';
+    wrap.style.cssText = 'display:grid;gap:7px;margin:6px 0 4px;padding-left:22px;max-width:720px;';
+    options.forEach((opt, idx) => {
+      const li = document.createElement('li');
+      li.style.cssText = 'padding-left:4px;color:var(--text-dim);';
+      const isOther = opt.key === 'other' || /^other\s*\/\s*clarify$/i.test(opt.label || '');
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;max-width:100%;';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-sm';
+      btn.style.cssText = [
+        'justify-content:flex-start',
+        'width:fit-content',
+        'max-width:100%',
+        'height:26px',
+        'padding:4px 12px',
+        'border:1px solid var(--border-medium)',
+        'border-radius:var(--radius-full)',
+        'background:transparent',
+        'white-space:nowrap',
+        'overflow:hidden',
+        'text-overflow:ellipsis',
+        'text-align:left',
+        'line-height:1',
+      ].join(';');
+      btn.textContent = opt.label;
+      btn.title = opt.reason || opt.label;
+      if (isOther) btn.disabled = true;
+
+      let input = null;
+      if (isOther) {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = 'Type clarification...';
+        input.style.cssText = [
+          'height:26px',
+          'min-width:180px',
+          'max-width:320px',
+          'flex:1 1 220px',
+          'border:1px solid var(--border-medium)',
+          'border-radius:var(--radius-full)',
+          'background:transparent',
+          'color:var(--text-primary)',
+          'font-family:var(--font-mono)',
+          'font-size:10px',
+          'padding:4px 10px',
+          'outline:none',
+        ].join(';');
+        input.addEventListener('input', () => {
+          btn.disabled = input.value.trim().length === 0;
+        });
+        input.addEventListener('keydown', e => {
+          if (e.key === 'Enter' && input.value.trim()) btn.click();
+        });
+      }
+
+      btn.addEventListener('click', () => {
+        const customText = input ? input.value.trim() : '';
+        if (isOther && !customText) {
+          input?.focus();
+          return;
+        }
+        wrap.querySelectorAll('button').forEach((b, buttonIndex) => {
+          b.disabled = true;
+          b.style.cursor = 'default';
+          b.style.opacity = buttonIndex === idx ? '1' : '0.45';
+          if (buttonIndex === idx) {
+            b.style.borderColor = 'var(--accent-border)';
+            b.style.color = 'var(--text-primary)';
+          }
+        });
+        wrap.querySelectorAll('input').forEach(field => {
+          field.disabled = true;
+          field.style.opacity = '0.75';
+        });
+        if (isOther) {
+          send(customText);
+        } else {
+          send(originalQuery, {route: opt.route, label: opt.label, showUser: false});
+        }
+      }, {once: true});
+      row.appendChild(btn);
+      if (input) row.appendChild(input);
+      li.appendChild(row);
+      wrap.appendChild(li);
+    });
+    answerRegion.appendChild(prompt);
+    answerRegion.appendChild(wrap);
+  }
+
   function renderTraceMeta(answerRegion, r) {
     const cost = (r.cost_usd || 0).toFixed(4);
     const sec = ((r.latency_ms || 0) / 1000).toFixed(1);
-    const planModel = r.plan_model || '';
-    const narrationModel = r.narration_model || r.model || '';
-    const routeSource = r.route_source ? ` (${r.route_source})` : '';
-    const routeText = r.route ? `:${r.route}${routeSource}` : '';
-    const modelText = `${r.provider || 'model'}${routeText} → plan ${planModel || 'n/a'} / answer ${narrationModel || 'n/a'}`;
-    const externalText = r.used_external_llm ? 'cloud used' : 'local only';
+    const modelText = r.model || r.narration_model || r.provider || 'model';
     answerRegion.insertAdjacentHTML('beforeend', `
       <div class="trace-meta">
         <span class="${badgeClass(r.badge)}">${escape(r.badge)}</span>
@@ -529,7 +666,6 @@
         <span class="sep">·</span>${r.total_tokens || 0} tokens
         <span class="sep">·</span>${sec}s
         <span class="sep">·</span>${escape(modelText)}
-        <span class="sep">·</span>${escape(externalText)}
       </div>`);
   }
 
@@ -554,7 +690,7 @@
     const answerRegion = turn.querySelector('[data-role="answer-region"]');
     const start = Date.now();
     const tick = setInterval(() => {
-      elapsedEl.textContent = `${((Date.now() - start) / 1000).toFixed(1)}s elapsed`;
+      elapsedEl.textContent = `${((Date.now() - start) / 1000).toFixed(1)}s`;
     }, 100);
 
     let url = `/chat/stream?query=${encodeURIComponent(q)}&conversation_ref=${encodeURIComponent(convRef())}&model_key=${encodeURIComponent(modelKey())}`;
@@ -633,13 +769,13 @@
       } else {
         await renderAnswerTyped(answerRegion, r);
       }
+      renderClarificationOptions(answerRegion, r);
+      renderResolutionOptions(answerRegion, r, q);
       renderTraceMeta(answerRegion, r);
       followThread();
 
       if (r.proposed_action) {
         renderProposedActionCard(r.proposed_action);
-      } else if (r.resolution_required) {
-        renderResolutionCard(r.resolution_required, q);
       } else if (evidenceAccum.length && r.badge !== 'Permission Denied' && r.badge !== 'Adversarial Input Blocked') {
         setEvidence(evidenceAccum);
       }
@@ -689,6 +825,25 @@
     const ref = 'CONV-' + Math.random().toString(36).slice(2, 8).toUpperCase();
     location.href = `/chat?conversation_ref=${encodeURIComponent(ref)}`;
   };
+
+  function hydrateHistoryOptions() {
+    document.querySelectorAll('.history-options').forEach(el => {
+      if (el.dataset.hydrated === '1') return;
+      let options = [];
+      try { options = JSON.parse(el.dataset.options || '[]'); } catch { options = []; }
+      if (!options.length) return;
+      const kind = el.dataset.choiceKind;
+      const originalQuery = el.dataset.originalQuery || '';
+      if (kind === 'resolution') {
+        renderResolutionOptions(el, {resolution_required: {options}}, originalQuery);
+      } else if (kind === 'clarification') {
+        renderClarificationOptions(el, {clarification_options: options});
+      }
+      el.dataset.hydrated = '1';
+    });
+  }
+
+  hydrateHistoryOptions();
 
   sendBtn.addEventListener('click', send);
   queryEl.addEventListener('keydown', e => {

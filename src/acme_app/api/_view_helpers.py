@@ -20,6 +20,8 @@ _BADGE_CLASS = {
     'Insufficient Evidence': 'insufficient',
     'Clarification Required': 'clarify',
     'Adversarial Input Blocked': 'adversarial',
+    'LLM Unavailable': 'needsreview',
+    'Resolution Required': 'needsreview',
 }
 
 

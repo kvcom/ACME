@@ -207,6 +207,18 @@ async def get_trace(session: AsyncSession, trace_ref: str) -> dict[str, Any] | N
         SELECT role_name, operation, resource, allowed, reason, created_at
         FROM rbac_decisions WHERE trace_id=:t ORDER BY created_at
     """), {'t': trace_id})).all()
+    normalised_events = []
+    for e in events:
+        payload = e[2] if isinstance(e[2], dict) else {}
+        normalised_events.append({
+            'event_type': e[0],
+            'event_name': e[1],
+            'payload': payload,
+            'latency_ms': e[3],
+            'status': e[4],
+            'created_at': e[5].isoformat(),
+        })
+
     return {
         'trace_ref': row[1], 'otel_trace_id': row[2], 'username': row[3], 'role': row[4],
         'user_query': row[5], 'user_query_redacted': row[6],
@@ -216,10 +228,7 @@ async def get_trace(session: AsyncSession, trace_ref: str) -> dict[str, Any] | N
         'cost_usd': float(row[15] or 0),
         'llm_latency_ms': row[16], 'tool_latency_ms': row[17], 'total_latency_ms': row[18],
         'created_at': row[19].isoformat() if row[19] else None,
-        'events': [
-            {'event_type': e[0], 'event_name': e[1], 'payload': e[2], 'latency_ms': e[3], 'status': e[4], 'created_at': e[5].isoformat()}
-            for e in events
-        ],
+        'events': normalised_events,
         'tool_calls': [
             {'tool_name': t[0], 'input': t[1], 'output_summary': t[2], 'status': t[3], 'latency_ms': t[4], 'error': t[5], 'created_at': t[6].isoformat()}
             for t in tool_calls
@@ -311,7 +320,7 @@ async def get_conversation_history(session: AsyncSession, conversation_ref: str)
     rows = (await session.execute(text("""
         SELECT t.id, t.user_query_redacted, t.final_answer, t.trace_ref, t.final_status,
                t.estimated_cost_usd, t.total_tokens, t.total_latency_ms, t.llm_provider,
-               t.created_at, t.detected_intent
+               t.created_at, t.detected_intent, t.llm_model
         FROM agent_traces t
         WHERE t.conversation_id = (SELECT id FROM conversations WHERE conversation_ref = :ref)
         ORDER BY t.created_at ASC
@@ -326,11 +335,13 @@ async def get_conversation_history(session: AsyncSession, conversation_ref: str)
             WHERE trace_id = :t
             ORDER BY created_at ASC
         """), {'t': trace_id})).all()
-        plan_steps = _events_to_plan_steps([
+        event_dicts = [
             {'event_type': e[0], 'event_name': e[1], 'payload': e[2] or {},
              'latency_ms': e[3], 'status': e[4]}
             for e in events
-        ])
+        ]
+        plan_steps = _events_to_plan_steps(event_dicts)
+        choice_kind, choice_options = _events_to_pending_choices(event_dicts, r[4])
         out.append({
             'user_query': r[1],
             'answer': r[2] or '',
@@ -342,9 +353,60 @@ async def get_conversation_history(session: AsyncSession, conversation_ref: str)
             'provider': r[8],
             'created_at': r[9].isoformat() if r[9] else None,
             'intent': r[10],
+            'model': r[11],
             'plan_steps': plan_steps,
+            'choice_kind': choice_kind,
+            'choice_options': choice_options,
         })
     return out
+
+
+def _events_to_pending_choices(
+    events: list[dict[str, Any]],
+    final_status: str | None,
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """Restore unresolved inline choice controls after a page refresh."""
+    if final_status == 'Resolution Required':
+        for ev in events:
+            if ev['event_type'] == 'agent_plan' and ev['event_name'] == 'classification.conflict':
+                payload = ev['payload'] or {}
+                rules_route = payload.get('rules_route') or 'clarification'
+                model_route = payload.get('model_route') or 'clarification'
+                return 'resolution', [
+                    {
+                        'key': 'rules',
+                        'label': f'Use rules: {rules_route}',
+                        'route': rules_route,
+                        'reason': payload.get('rules_reason') or '',
+                    },
+                    {
+                        'key': 'model',
+                        'label': f'Use model: {model_route}',
+                        'route': model_route,
+                        'reason': payload.get('model_reason') or '',
+                    },
+                    {
+                        'key': 'other',
+                        'label': 'Other / clarify',
+                        'route': 'clarification',
+                        'reason': 'Ask the user to clarify the intended workflow.',
+                    },
+                ]
+    if final_status == 'Clarification Required':
+        for ev in events:
+            if ev['event_type'] == 'agent_plan' and ev['event_name'] in {
+                'ambiguous_customer.preplan_detected',
+                'ambiguous_customer.detected',
+            }:
+                candidates = (ev['payload'] or {}).get('candidates') or []
+                options = [
+                    {'label': str(candidate), 'value': str(candidate), 'description': ''}
+                    for candidate in candidates
+                    if str(candidate).strip()
+                ]
+                if options:
+                    return 'clarification', options
+    return None, []
 
 
 def _events_to_plan_steps(events: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -36,6 +36,7 @@ from acme_app.application.propose_confirm import build_proposed_action, get_pend
 from acme_app.application.prompts import NARRATION_PREAMBLE
 from acme_app.application.schemas import (
     ChatResponse,
+    ClarificationOptionDTO,
     ProposedActionDTO,
     ResolutionOptionDTO,
     ResolutionRequiredDTO,
@@ -323,6 +324,17 @@ def _resolution_payload(rules: RouteDecision, model: RouteDecision) -> Resolutio
     )
 
 
+def _customer_clarification_options(matches: list[dict[str, Any]]) -> list[ClarificationOptionDTO]:
+    options: list[ClarificationOptionDTO] = []
+    for match in matches:
+        name = str(match.get('name') or '').strip()
+        if not name:
+            continue
+        detail = ' · '.join(str(v) for v in (match.get('tier'), match.get('region')) if v)
+        options.append(ClarificationOptionDTO(label=name, value=name, description=detail))
+    return options
+
+
 async def _emit(sink: EventSink, name: str, payload: dict[str, Any]) -> None:
     if sink is None:
         return
@@ -518,9 +530,20 @@ async def run_agent(
                     ),
                     intent='llm_unavailable', started_ms=started_ms,
                 )
+        plan_event_model_key = _model_key_for_cost(llm_plan_response.model or '', provider_name)
+        plan_event_cost = compute_cost(
+            plan_event_model_key,
+            llm_plan_response.prompt_tokens,
+            llm_plan_response.completion_tokens,
+        )
         ledger.event('agent_plan', 'plan.created',
                      {'intent': plan.intent, 'steps': len(plan.steps), 'write_requested': plan.write_requested,
-                      'narration_kind': plan.narration_kind})
+                      'narration_kind': plan.narration_kind,
+                      'model': llm_plan_response.model,
+                      'prompt_tokens': llm_plan_response.prompt_tokens,
+                      'completion_tokens': llm_plan_response.completion_tokens,
+                      'total_tokens': llm_plan_response.prompt_tokens + llm_plan_response.completion_tokens,
+                      'cost_usd': plan_event_cost})
         await _emit(event_sink, 'plan', {'intent': plan.intent, 'steps_count': len(plan.steps),
                                           'narration_kind': plan.narration_kind})
 
@@ -681,8 +704,10 @@ async def run_agent(
         # The deterministic_fallback below only fires if narration itself is
         # unreachable — same safety net as everywhere else.
         ambig = facts.get('ambiguous_customer')
+        clarification_options: list[ClarificationOptionDTO] = []
         if ambig and ambig.get('matches'):
             matches = ambig['matches']
+            clarification_options = _customer_clarification_options(matches)
             ledger.event('agent_plan', 'ambiguous_customer.detected',
                          {'queried': ambig.get('queried'),
                           'candidates': [m['name'] for m in matches]})
@@ -716,8 +741,18 @@ async def run_agent(
                 prompt_tokens=0, completion_tokens=0, latency_ms=0,
                 model=llm_plan_response.model,
             )
+        narration_event_model_key = _model_key_for_cost(narration_response.model or '', provider_name)
+        narration_event_cost = compute_cost(
+            narration_event_model_key,
+            narration_response.prompt_tokens,
+            narration_response.completion_tokens,
+        )
         ledger.event('final_response', 'narration.complete',
-                     {'model': narration_response.model, 'len': len(narration_response.text)},
+                     {'model': narration_response.model, 'len': len(narration_response.text),
+                      'prompt_tokens': narration_response.prompt_tokens,
+                      'completion_tokens': narration_response.completion_tokens,
+                      'total_tokens': narration_response.prompt_tokens + narration_response.completion_tokens,
+                      'cost_usd': narration_event_cost},
                      latency_ms=narration_response.latency_ms)
 
         if plan.requires_clarification and plan.clarification_question:
@@ -808,6 +843,7 @@ async def run_agent(
             'route_confidence': auto_route_confidence,
             'route_source': auto_route_source,
             'used_external_llm': used_external_llm,
+            'clarification_options': [option.model_dump(mode='json') for option in clarification_options],
         })
 
         return ChatResponse(
@@ -832,6 +868,7 @@ async def run_agent(
             route_confidence=auto_route_confidence,
             route_source=auto_route_source,
             used_external_llm=used_external_llm,
+            clarification_options=clarification_options,
             query_redacted=query_redacted,
         )
 
@@ -1150,6 +1187,7 @@ async def _handle_preplan_ambiguity(
 
     answer = narrated or fallback_text
     badge = 'Clarification Required'
+    clarification_options = _customer_clarification_options(matches)
 
     prompt_tokens = narration_response.prompt_tokens if narration_response else 0
     completion_tokens = narration_response.completion_tokens if narration_response else 0
@@ -1159,7 +1197,11 @@ async def _handle_preplan_ambiguity(
 
     ledger.event('final_response', 'narration.complete',
                  {'model': model, 'len': len(answer),
-                  'mode': 'preplan_clarification'},
+                  'mode': 'preplan_clarification',
+                  'prompt_tokens': prompt_tokens,
+                  'completion_tokens': completion_tokens,
+                  'total_tokens': prompt_tokens + completion_tokens,
+                  'cost_usd': cost},
                  latency_ms=llm_latency)
 
     await repo.conversation_upsert(session, conversation_ref, username, query[:200])
@@ -1187,6 +1229,7 @@ async def _handle_preplan_ambiguity(
         'plan_model': '',
         'narration_model': model,
         'used_external_llm': _external_llm_used('', model or provider_name, None),
+        'clarification_options': [option.model_dump(mode='json') for option in clarification_options],
     })
 
     return ChatResponse(
@@ -1202,6 +1245,7 @@ async def _handle_preplan_ambiguity(
         plan_model='',
         narration_model=model,
         used_external_llm=_external_llm_used('', model or provider_name, None),
+        clarification_options=clarification_options,
         query_redacted=query_redacted,
     )
 

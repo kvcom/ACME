@@ -298,6 +298,12 @@
           </div>
           {% endif %}
           <p>{{ turn.answer }}</p>
+          {% if turn.choice_kind and turn.choice_options %}
+          <div class="history-options"
+               data-choice-kind="{{ turn.choice_kind }}"
+               data-original-query="{{ turn.user_query }}"
+               data-options="{{ turn.choice_options | tojson | forceescape }}"></div>
+          {% endif %}
           <div class="trace-meta">
             <span class="badge badge-{{ turn.badge_class }}">{{ turn.badge }}</span>
             <span class="sep">·</span>
@@ -305,7 +311,7 @@
             <span class="sep">·</span>${{ '%.4f' % turn.cost_usd }}
             <span class="sep">·</span>{{ turn.total_tokens }} tokens
             <span class="sep">·</span>{{ '%.1f' % (turn.latency_ms / 1000) }}s
-            <span class="sep">·</span>{{ turn.provider }}
+            <span class="sep">·</span>{{ turn.model or turn.provider }}
           </div>
         </div>
       </div>

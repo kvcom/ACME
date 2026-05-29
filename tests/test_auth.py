@@ -25,3 +25,24 @@ def test_extract_roles_filters_unknown():
 
 def test_decode_session_invalid_returns_none():
     assert _decode_session('not-a-real-cookie') is None
+
+
+def test_decode_session_expired_returns_none(monkeypatch):
+    import base64
+    import json
+
+    payload = {'sub': 'abc', 'u': 'sam.support', 'r': ['support_user'], 't': '', 'exp': 1}
+    cookie = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    monkeypatch.setattr('time.time', lambda: 10)
+
+    assert _decode_session(cookie) is None
+
+
+def test_decode_session_without_expiry_returns_none():
+    import base64
+    import json
+
+    payload = {'sub': 'abc', 'u': 'sam.support', 'r': ['support_user'], 't': ''}
+    cookie = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+
+    assert _decode_session(cookie) is None

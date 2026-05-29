@@ -17,7 +17,7 @@
     .crumb .cur { color: var(--text-primary); }
 
     .trace-workspace {
-      display: grid; grid-template-columns: 300px 1fr 340px;
+      display: grid; grid-template-columns: 300px minmax(620px, 1fr) 380px;
       overflow: hidden; min-height: 0;
     }
     .trace-col {
@@ -53,14 +53,16 @@
     .step-detail .sh .lbl { font-size: 9px; letter-spacing: 0.10em;
                             text-transform: uppercase; color: var(--accent-dim); }
     .step-detail .sh .name { font-family: var(--font-mono); font-size: 13px;
-                             color: var(--text-primary); margin-top: 2px; }
+                             color: var(--text-primary); margin-top: 2px;
+                             overflow-wrap: anywhere; line-height: 1.35; }
     .step-detail .sb { padding: 12px; }
     .json {
       background: var(--bg-base); border: 1px solid var(--border-subtle);
       border-radius: var(--radius-sm); padding: 10px 12px;
       font-family: var(--font-mono); font-size: 10px;
       color: var(--text-secondary); line-height: 1.6;
-      white-space: pre-wrap; overflow-x: auto;
+      white-space: pre-wrap; overflow-x: auto; overflow-wrap: anywhere;
+      max-height: 46vh;
     }
 
     .tg { position: relative; width: 100%; margin: 0 0 16px; }
@@ -91,18 +93,20 @@
       position: absolute; background: var(--bg-surface);
       border: 1px solid var(--border-medium); border-radius: var(--radius-md);
       padding: 8px 10px;
-      display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center;
+      display: grid; grid-template-columns: 28px minmax(0, 1fr) 64px; gap: 10px; align-items: center;
       z-index: 1; cursor: pointer;
       transition: border-color 120ms, background 120ms;
+      box-sizing: border-box;
     }
     .tg-node:hover { border-color: var(--border-strong); }
     .tg-node .nm-main { font-family: var(--font-mono); font-size: 11px;
                         color: var(--text-high); line-height: 1.3;
-                        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                        min-width: 0; }
     .tg-node .nm-sub  { font-size: 10px; color: var(--text-muted); line-height: 1.4;
                         margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .tg-node .nm-meta { font-family: var(--font-mono); font-size: 9px;
-                        color: var(--text-muted); text-align: right; }
+                        color: var(--text-muted); text-align: right; min-width: 0; }
     .tg-node .nm-meta b { display: block; color: var(--text-high); font-weight: 500; font-size: 10px; }
 
     .tg-node.t-policy   { border-color: var(--border-medium); }
@@ -239,7 +243,7 @@
         {% if kind == 'action_proposed' or kind == 'action_confirmed' or kind == 'action_validation' %}{% set node_class = 't-action' %}{% endif %}
         {% if ev.status == 'error' or ev.status == 'blocked' %}{% set node_class = 't-error' %}{% endif %}
 
-        <div class="tg-node {{ node_class }}" style="left:200px; top:{{ top }}px; width:320px;"
+        <div class="tg-node {{ node_class }}" style="left:160px; top:{{ top }}px; width:420px;"
              onclick="selectNode(this, {{ loop.index0 }})">
           <span class="num">{{ loop.index }}</span>
           <span class="iconchip {% if ev.status == 'error' or ev.status == 'blocked' %}danger{% elif kind in ['skill_invocation', 'action_proposed', 'action_confirmed'] %}accent{% elif kind in ['agent_plan', 'final_response'] %}info{% elif kind == 'tool_call' %}neutral{% else %}success{% endif %}">
@@ -270,12 +274,13 @@
         <div class="sb">
           <div class="kv">
             <span class="k">Status</span>  <span class="v" id="sel-status">{{ trace.final_status }}</span>
-            <span class="k">Tokens</span>  <span class="v">{{ trace.total_tokens }}</span>
-            <span class="k">Cost</span>    <span class="v">${{ '%.4f' % (trace.cost_usd or 0) }}</span>
+            <span class="k">Latency</span> <span class="v" id="sel-latency">—</span>
+            <span class="k">Tokens</span>  <span class="v" id="sel-tokens">—</span>
+            <span class="k">Cost</span>    <span class="v" id="sel-cost">—</span>
           </div>
         </div>
         <div style="padding: 0 12px 12px;">
-          <div class="label" style="margin-bottom:6px;">Final answer</div>
+          <div class="label" style="margin-bottom:6px;" id="sel-payload-label">Payload</div>
           <div class="json" id="sel-payload">{{ trace.final_answer or '—' }}</div>
         </div>
       </div>
@@ -292,18 +297,50 @@
 
 <script>
   const EVENTS = {{ trace.events | tojson | safe }};
+  const TRACE_TOTALS = {
+    tokens: {{ trace.total_tokens or 0 }},
+    cost: {{ '%.6f' % (trace.cost_usd or 0) }},
+    latency: {{ trace.total_latency_ms or 0 }},
+    finalAnswer: {{ (trace.final_answer or '—') | tojson }},
+  };
+  function eventMetrics(ev) {
+    const payload = ev.payload || {};
+    const eventTokens = payload.total_tokens ?? null;
+    const eventCost = payload.cost_usd ?? null;
+    if (eventTokens !== null || eventCost !== null) {
+      return {
+        tokens: eventTokens !== null ? String(eventTokens) : '—',
+        cost: eventCost !== null ? `$${Number(eventCost || 0).toFixed(4)}` : '—',
+        latency: ev.latency_ms ? `${ev.latency_ms} ms` : '—',
+      };
+    }
+    return {
+      tokens: '—',
+      cost: '—',
+      latency: ev.latency_ms ? `${ev.latency_ms} ms` : '—',
+    };
+  }
   function selectNode(el, idx) {
     document.querySelectorAll('.tg-node.selected').forEach(n => n.classList.remove('selected'));
     el.classList.add('selected');
     const ev = EVENTS[idx];
+    const metrics = eventMetrics(ev);
     document.getElementById('sel-name').textContent = ev.event_name;
     document.getElementById('sel-status').textContent = ev.status;
-    document.getElementById('sel-payload').textContent = JSON.stringify(ev.payload, null, 2);
+    document.getElementById('sel-latency').textContent = metrics.latency;
+    document.getElementById('sel-tokens').textContent = metrics.tokens;
+    document.getElementById('sel-cost').textContent = metrics.cost;
+    document.getElementById('sel-payload-label').textContent =
+      ev.event_type === 'final_response' ? 'Final answer' : 'Payload';
+    document.getElementById('sel-payload').textContent =
+      ev.event_type === 'final_response'
+        ? `${TRACE_TOTALS.finalAnswer}\n\nEvent payload:\n${JSON.stringify(ev.payload || {}, null, 2)}`
+        : JSON.stringify(ev.payload || {}, null, 2);
   }
   // Pre-select last node
   const nodes = document.querySelectorAll('.tg-node');
   if (nodes.length) {
-    nodes[nodes.length - 1].classList.add('selected');
+    selectNode(nodes[nodes.length - 1], nodes.length - 1);
   }
 </script>
 </body>

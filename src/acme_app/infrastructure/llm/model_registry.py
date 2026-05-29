@@ -31,9 +31,9 @@ class ModelSpec:
 
 MODEL_REGISTRY: dict[str, ModelSpec] = {
     # Anthropic — Claude family.
-    'claude-opus-4-7': ModelSpec(
-        key='claude-opus-4-7', provider='anthropic', model='claude-opus-4-7',
-        label='Claude Opus 4.7', badge='anthropic',
+    'claude-opus-4-8': ModelSpec(
+        key='claude-opus-4-8', provider='anthropic', model='claude-opus-4-8',
+        label='Claude Opus 4.8', badge='anthropic',
         input_per_1k=0.005, output_per_1k=0.025,
     ),
     'claude-sonnet-4-6': ModelSpec(
@@ -83,7 +83,7 @@ def resolve(model_key: str | None) -> ModelSpec:
 
 
 def default_key() -> str:
-    return 'gpt-5.4-mini'
+    return 'claude-opus-4-8'
 
 
 def visible_keys() -> list[str]:

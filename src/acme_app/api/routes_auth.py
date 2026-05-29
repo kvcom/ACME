@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from acme_app.auth.current_user import CurrentUser, _encode_session, get_current_user, user_from_token
 from acme_app.auth.keycloak_client import KeycloakError, login as keycloak_login
+from acme_app.config import settings
 
 
 router = APIRouter(tags=['auth'])
@@ -46,10 +47,15 @@ async def login_form(
         return request.app.state.templates.TemplateResponse(
             request, 'login.html', {'error': error or 'Invalid credentials', 'next': next}, status_code=401,
         )
-    # 7 days. Demo-grade; production uses short access tokens + refresh rotation.
     destination = next if next.startswith('/') else '/chat'
     response = RedirectResponse(url=destination, status_code=303)
-    response.set_cookie('acme_session', _encode_session(user), httponly=True, samesite='lax', max_age=7 * 24 * 3600)
+    response.set_cookie(
+        'acme_session',
+        _encode_session(user),
+        httponly=True,
+        samesite='lax',
+        max_age=settings.demo_session_max_age_seconds,
+    )
     return response
 
 

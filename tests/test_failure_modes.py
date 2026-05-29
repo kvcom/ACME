@@ -51,10 +51,13 @@ async def test_auto_raises_when_no_provider_available(monkeypatch):
         await auto.plan('sys', 'user', {})
 
 
-def test_unknown_provider_falls_back_to_default_manual_model():
+def test_unknown_provider_falls_back_to_default_manual_model(monkeypatch):
+    from acme_app.config import settings
     from acme_app.infrastructure.llm.provider import get_provider
+
+    monkeypatch.setattr(settings, 'anthropic_api_key', 'sk-test')
     provider = get_provider('this-key-does-not-exist')
-    assert provider.name == 'openai'
+    assert provider.name == 'anthropic'
 
 
 def test_model_registry_has_manual_providers_without_auto():

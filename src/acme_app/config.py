@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     )
 
     app_env: str = 'dev'
-    llm_provider: str = 'gpt-5.4-mini'
-    llm_model: str = 'gpt-5.4-mini'
+    llm_provider: str = 'claude-opus-4-8'
+    llm_model: str = 'claude-opus-4-8'
 
     anthropic_api_key: str = ''
     anthropic_model: str = 'claude-sonnet-4-6'
@@ -36,6 +36,7 @@ class Settings(BaseSettings):
 
     confirmation_hmac_secret: str = 'dev-only-secret-change-me'
     debug_endpoints_enabled: bool = True
+    demo_session_max_age_seconds: int = 8 * 3600
 
 
 settings = Settings()

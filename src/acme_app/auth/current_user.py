@@ -6,11 +6,13 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from dataclasses import dataclass
 
 from fastapi import Cookie, Header, HTTPException
 
 from acme_app.auth.jwt_validator import decode_token, extract_roles
+from acme_app.config import settings
 
 VALID_ROLES = {'sales_user', 'support_user', 'admin'}
 SESSION_COOKIE = 'acme_session'
@@ -33,7 +35,13 @@ class CurrentUser:
 
 
 def _encode_session(user: CurrentUser) -> str:
-    raw = json.dumps({'sub': user.subject, 'u': user.username, 'r': user.roles, 't': user.access_token}).encode()
+    raw = json.dumps({
+        'sub': user.subject,
+        'u': user.username,
+        'r': user.roles,
+        't': user.access_token,
+        'exp': int(time.time()) + settings.demo_session_max_age_seconds,
+    }).encode()
     return base64.urlsafe_b64encode(raw).decode()
 
 
@@ -41,6 +49,9 @@ def _decode_session(token: str) -> CurrentUser | None:
     try:
         raw = base64.urlsafe_b64decode(token.encode())
         data = json.loads(raw)
+        expires_at = int(data.get('exp') or 0)
+        if not expires_at or expires_at < int(time.time()):
+            return None
         return CurrentUser(subject=data['sub'], username=data['u'], roles=list(data['r']), access_token=data.get('t', ''))
     except Exception:
         return None

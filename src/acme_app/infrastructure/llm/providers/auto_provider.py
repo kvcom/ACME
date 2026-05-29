@@ -77,7 +77,7 @@ ROUTE_CHAINS: dict[str, list[str]] = {
     'write_proposal': ['gpt-5.4-mini', 'claude-sonnet-4-6', 'gpt-5.5'],
     'closure_check': ['gpt-5.4-mini', 'claude-sonnet-4-6', 'gpt-5.5'],
     'recommendation': ['gpt-5.4-mini', 'gemini-3.5-flash', 'claude-sonnet-4-6'],
-    'broad_analysis': ['claude-sonnet-4-6', 'gpt-5.5', 'claude-opus-4-7'],
+    'broad_analysis': ['claude-sonnet-4-6', 'gpt-5.5', 'claude-opus-4-8'],
     'security_sensitive': ['claude-sonnet-4-6', 'gpt-5.4-mini', 'gpt-5.5'],
     'clarification': ['gpt-5.4-mini', 'claude-sonnet-4-6'],
     'structured_planning': ['gpt-5.4-mini', 'claude-sonnet-4-6', 'gpt-5.5'],
@@ -115,7 +115,7 @@ PRIORITY_CHAIN: list[str] = [
     'claude-sonnet-4-6',
     'gemini-3.1-pro-preview',
     'gpt-5.5',
-    'claude-opus-4-7',
+    'claude-opus-4-8',
 ]
 
 
