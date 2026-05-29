@@ -13,6 +13,11 @@ jinja2>=3.1
 sse-starlette>=2.1
 opentelemetry-sdk>=1.25
 opentelemetry-exporter-otlp>=1.25
+opentelemetry-instrumentation-fastapi>=0.46b0
+anthropic>=0.39
+openai>=1.40
+google-generativeai>=0.8
+python-multipart>=0.0.9
 
 [dev]
 pytest>=8.2

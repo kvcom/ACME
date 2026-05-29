@@ -4,6 +4,7 @@ src/acme_app/__init__.py
 src/acme_app/config.py
 src/acme_app/main.py
 src/acme_app/api/__init__.py
+src/acme_app/api/_view_helpers.py
 src/acme_app/api/routes_actions.py
 src/acme_app/api/routes_auth.py
 src/acme_app/api/routes_chat.py
@@ -23,7 +24,10 @@ src/acme_app/auth/current_user.py
 src/acme_app/auth/jwt_validator.py
 src/acme_app/auth/keycloak_client.py
 src/acme_app/domain/__init__.py
+src/acme_app/domain/action.py
+src/acme_app/domain/customer.py
 src/acme_app/domain/evidence.py
+src/acme_app/domain/issue.py
 src/acme_app/domain/risk_rules.py
 src/acme_app/evaluation/__init__.py
 src/acme_app/evaluation/eval_cases.py
@@ -37,10 +41,13 @@ src/acme_app/infrastructure/db/repositories.py
 src/acme_app/infrastructure/db/session.py
 src/acme_app/infrastructure/llm/__init__.py
 src/acme_app/infrastructure/llm/cost_table.py
+src/acme_app/infrastructure/llm/model_registry.py
 src/acme_app/infrastructure/llm/provider.py
 src/acme_app/infrastructure/llm/providers/__init__.py
 src/acme_app/infrastructure/llm/providers/anthropic_provider.py
+src/acme_app/infrastructure/llm/providers/auto_provider.py
 src/acme_app/infrastructure/llm/providers/base.py
+src/acme_app/infrastructure/llm/providers/google_provider.py
 src/acme_app/infrastructure/llm/providers/ollama_provider.py
 src/acme_app/infrastructure/llm/providers/openai_provider.py
 src/acme_app/infrastructure/mcp_client/__init__.py
