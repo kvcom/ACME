@@ -287,3 +287,46 @@ BEGIN
     RETURN NEXT;
 END;
 $$ LANGUAGE plpgsql;
+
+-- ─── Realtime change notifications (D-018) ───────────────────────────────────
+-- AFTER INSERT/UPDATE triggers fire pg_notify('db_explorer', ...) so the
+-- backend's LISTEN-based broadcaster can push live updates over WebSocket
+-- to the admin DB Explorer.
+
+CREATE OR REPLACE FUNCTION notify_db_explorer() RETURNS TRIGGER AS $$
+DECLARE
+    row_id TEXT;
+BEGIN
+    row_id := COALESCE(
+        (row_to_json(NEW)::jsonb ->> 'id'),
+        (row_to_json(NEW)::jsonb ->> 'action_type')
+    );
+    PERFORM pg_notify('db_explorer', json_build_object(
+        'table', TG_TABLE_NAME,
+        'op', TG_OP,
+        'id', row_id
+    )::text);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+DECLARE
+    t TEXT;
+    tables TEXT[] := ARRAY[
+        'users', 'user_roles',
+        'customers', 'issues', 'issue_updates', 'next_actions', 'action_catalogue',
+        'conversations', 'agent_traces', 'trace_events', 'tool_call_logs', 'rbac_decisions',
+        'eval_runs', 'eval_results'
+    ];
+BEGIN
+    FOREACH t IN ARRAY tables LOOP
+        EXECUTE format('DROP TRIGGER IF EXISTS notify_db_explorer_trg ON %I', t);
+        EXECUTE format(
+            'CREATE TRIGGER notify_db_explorer_trg
+             AFTER INSERT OR UPDATE ON %I
+             FOR EACH ROW EXECUTE FUNCTION notify_db_explorer()',
+            t
+        );
+    END LOOP;
+END $$;

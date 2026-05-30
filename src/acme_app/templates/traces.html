@@ -76,6 +76,7 @@
       <a class="active" href="/traces">Traces</a>
       {% if user.primary_role == 'admin' %}
       <a href="/eval">Eval</a>
+      <a href="/db-explorer">DB Explorer</a>
       {% endif %}
     </nav>
     <div class="spacer"></div>
@@ -91,19 +92,20 @@
     </div>
     <div class="search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-      <input type="text" placeholder="trace · user · ISS-… · NA-…"/>
+      <input id="trace-search" type="text" placeholder="trace · user · ISS-… · NA-…"/>
     </div>
   </div>
 
   <div class="filter-bar">
-    <div class="pill-group">
-      <button class="active">all</button>
-      <button>grounded</button>
-      <button>created</button>
-      <button>proposed</button>
-      <button>denied</button>
-      <button>blocked</button>
+    <div class="pill-group" id="trace-filter">
+      <button class="active" data-filter="all">all</button>
+      <button data-filter="grounded">grounded</button>
+      <button data-filter="created">created</button>
+      <button data-filter="proposed">proposed</button>
+      <button data-filter="denied">denied</button>
+      <button data-filter="adversarial">blocked</button>
     </div>
+    <span id="trace-count" class="page-sub" style="margin-left:auto;"></span>
   </div>
 
   <main class="table-wrap">
@@ -125,7 +127,7 @@
       </thead>
       <tbody>
         {% for t in traces %}
-        <tr onclick="location='/traces/{{ t.trace_ref }}'">
+        <tr data-badge="{{ t.badge_class }}" data-search="{{ (t.trace_ref ~ ' ' ~ t.username ~ ' ' ~ (t.intent or '') ~ ' ' ~ (t.status or ''))|lower }}" onclick="location='/traces/{{ t.trace_ref }}'">
           <td><a class="trace-id" href="/traces/{{ t.trace_ref }}">{{ t.trace_ref }}</a></td>
           <td>{{ t.username }} <span class="role-tag {{ t.role }}">{{ t.role.replace('_user','') }}</span></td>
           <td><div class="q-cell">"{{ t.intent or '—' }}"</div></td>
@@ -142,5 +144,49 @@
   </main>
 
 </div>
+<script>
+  (function () {
+    const searchEl = document.getElementById('trace-search');
+    const filterEl = document.getElementById('trace-filter');
+    const countEl  = document.getElementById('trace-count');
+    const rows     = Array.from(document.querySelectorAll('.ttbl tbody tr'));
+    if (!rows.length) return;
+
+    let activeBadge = 'all';
+    let activeQuery = '';
+
+    function apply() {
+      let visible = 0;
+      for (const row of rows) {
+        const badge = row.dataset.badge || '';
+        const hay   = row.dataset.search || '';
+        const badgeMatch  = activeBadge === 'all' || badge === activeBadge;
+        const searchMatch = !activeQuery || hay.includes(activeQuery);
+        const show = badgeMatch && searchMatch;
+        row.style.display = show ? '' : 'none';
+        if (show) visible++;
+      }
+      if (countEl) {
+        countEl.textContent = visible === rows.length
+          ? ''
+          : `${visible} of ${rows.length} shown`;
+      }
+    }
+
+    searchEl.addEventListener('input', (e) => {
+      activeQuery = e.target.value.trim().toLowerCase();
+      apply();
+    });
+
+    filterEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-filter]');
+      if (!btn) return;
+      for (const b of filterEl.querySelectorAll('button')) b.classList.remove('active');
+      btn.classList.add('active');
+      activeBadge = btn.dataset.filter;
+      apply();
+    });
+  })();
+</script>
 </body>
 </html>

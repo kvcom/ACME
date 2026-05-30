@@ -12,10 +12,12 @@ from acme_app.api.routes_actions import router as actions_router
 from acme_app.api.routes_auth import router as auth_router
 from acme_app.api.routes_chat import router as chat_router
 from acme_app.api.routes_conversations import router as conversations_router
+from acme_app.api.routes_db_explorer import router as db_explorer_router
 from acme_app.api.routes_eval import router as eval_router
 from acme_app.api.routes_evidence import router as evidence_router
 from acme_app.api.routes_health import router as health_router
 from acme_app.api.routes_traces import router as traces_router
+from acme_app.application.realtime import broadcaster as realtime_broadcaster
 from acme_app.auth.current_user import get_optional_user
 from acme_app.observability.otel import setup_otel
 
@@ -25,6 +27,16 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name
 setup_otel()
 
 app = FastAPI(title='Acme Operations Assistant', version='1.0.0')
+
+
+@app.on_event('startup')
+async def _start_realtime() -> None:
+    await realtime_broadcaster.start()
+
+
+@app.on_event('shutdown')
+async def _stop_realtime() -> None:
+    await realtime_broadcaster.stop()
 
 _static_dir = Path(__file__).parent / 'static'
 _templates_dir = Path(__file__).parent / 'templates'
@@ -39,13 +51,14 @@ app.include_router(actions_router)
 app.include_router(traces_router)
 app.include_router(evidence_router)
 app.include_router(eval_router)
+app.include_router(db_explorer_router)
 
 
 # HTML routes (the browser ones) should redirect to /login on 401, not return
 # raw JSON. We detect "HTML request" by checking the Accept header — XHR/JSON
 # clients (the eval runner, fetch() in chat.js) keep the JSON response so they
 # can react in code.
-_HTML_PATH_PREFIXES = ('/chat', '/conversations', '/traces', '/eval', '/login', '/')
+_HTML_PATH_PREFIXES = ('/chat', '/conversations', '/traces', '/eval', '/db-explorer', '/login', '/')
 
 
 def _wants_html(request: Request) -> bool:

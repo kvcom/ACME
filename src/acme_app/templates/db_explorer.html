@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Acme Ops · DB Explorer</title>
+  <link rel="stylesheet" href="/static/app.css"/>
+  <style>
+    .page { display: grid; grid-template-rows: 40px 1fr; height: 100vh; overflow: hidden; }
+    .body { display: grid; grid-template-columns: 240px 1fr; min-height: 0; }
+    .sidebar {
+      border-right: 1px solid var(--border-subtle);
+      background: var(--bg-base);
+      padding: 16px 0; overflow-y: auto;
+    }
+    .sidebar h2 {
+      font-family: var(--font-ui); font-size: 10px; font-weight: 500;
+      letter-spacing: 0.10em; text-transform: uppercase; color: var(--text-muted);
+      padding: 0 18px 8px; margin: 0;
+    }
+    .sidebar ul { list-style: none; padding: 0; margin: 0; }
+    .sidebar li {
+      padding: 6px 18px; font-family: var(--font-mono); font-size: 11px;
+      color: var(--text-secondary); cursor: pointer; user-select: none;
+      border-left: 2px solid transparent;
+    }
+    .sidebar li:hover { background: var(--bg-surface-raised); color: var(--text-primary); }
+    .sidebar li.active {
+      color: var(--accent-bright); border-left-color: var(--accent-bright);
+      background: var(--bg-surface);
+    }
+    /* .main is a fixed-height flex column. .main-header is pinned at the
+       top; .grid-wrap is the one scrolling area, so position:sticky inside
+       the table anchors cleanly to its top (top:0) and rows can't bleed
+       above the column header line. */
+    .main {
+      display: flex; flex-direction: column;
+      padding: 22px 28px 0; overflow: hidden; min-height: 0;
+    }
+    .main-header {
+      flex: 0 0 auto;
+      display: flex; align-items: baseline; gap: 14px;
+      padding-bottom: 14px; border-bottom: 1px solid var(--border-subtle);
+      margin-bottom: 16px;
+    }
+    .grid-wrap {
+      flex: 1 1 auto; overflow: auto; min-height: 0;
+      padding-bottom: 60px;
+    }
+    .main-header h1 {
+      font-family: var(--font-mono); font-size: 18px; font-weight: 500;
+      color: var(--text-primary); margin: 0;
+    }
+    .main-header .hint {
+      font-size: 11px; color: var(--text-muted); font-family: var(--font-ui);
+    }
+    .empty {
+      padding: 80px 0; text-align: center; color: var(--text-muted);
+      font-size: 13px; font-family: var(--font-ui);
+    }
+
+    /* Tables */
+    .gtbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 11px; }
+    .gtbl th {
+      text-align: left; font-family: var(--font-ui); font-size: 9px; font-weight: 500;
+      letter-spacing: 0.10em; text-transform: uppercase; color: var(--text-muted);
+      padding: 8px 10px; border-bottom: 1px solid var(--border-subtle);
+      /* Solid background + high z-index so scrolled rows don't bleed through. */
+      background: var(--bg-base); white-space: nowrap;
+      position: sticky; top: 0; z-index: 5;
+      box-shadow: 0 1px 0 0 var(--border-subtle);
+    }
+    /* Nested tables sit inside .nested which is not the scroll container, so
+       their header sticks to its own nested top rather than the main scroll. */
+    .nested .gtbl th { position: static; box-shadow: none; }
+    .gtbl td {
+      padding: 7px 10px; border-bottom: 1px solid var(--border-subtle);
+      font-family: var(--font-mono); color: var(--text-high); vertical-align: top;
+      white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+    }
+    .gtbl td .cell { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+    .gtbl td.wrap { white-space: normal; }
+    .gtbl tr.parent-row > td { background: rgba(217,119,87,0.03); }
+    .gtbl tr.nested-host > td { padding: 0; background: var(--bg-base); }
+
+    .cell { display: inline-flex; align-items: center; gap: 6px; }
+    .expand-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 16px; height: 16px; border-radius: 3px;
+      background: var(--bg-surface-raised); color: var(--accent-bright);
+      border: 1px solid var(--border-medium); cursor: pointer; padding: 0;
+      font-size: 11px; line-height: 1; font-weight: 600;
+      font-family: var(--font-mono);
+    }
+    .expand-btn:hover { background: var(--accent-bright); color: var(--bg-base); }
+    .expand-btn.open { background: var(--accent-dim); color: var(--bg-base); }
+
+    .nested {
+      border-left: 2px solid var(--accent-dim);
+      margin: 4px 0 10px 24px; padding: 8px 0;
+      background: var(--bg-surface);
+    }
+    .nested-header {
+      padding: 4px 12px 6px; font-family: var(--font-ui); font-size: 10px;
+      color: var(--text-muted); letter-spacing: 0.06em;
+    }
+    .nested-header b { color: var(--text-secondary); font-weight: 500;
+      font-family: var(--font-mono); text-transform: lowercase; letter-spacing: 0; }
+    .nested-group { padding: 0 12px 14px; }
+    .nested-group h4 {
+      font-family: var(--font-ui); font-size: 10px; font-weight: 500;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-muted); margin: 12px 0 6px;
+      display: inline-flex; align-items: center; gap: 8px;
+      cursor: pointer; user-select: none;
+    }
+    .nested-group h4:hover { color: var(--text-secondary); }
+    .nested-group h4 .count { color: var(--accent-dim); font-family: var(--font-mono); }
+    .nested-group h4 .toggle {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 16px; height: 16px; border-radius: 3px;
+      background: var(--bg-surface-raised); color: var(--accent-bright);
+      border: 1px solid var(--border-medium);
+      font-family: var(--font-mono); font-size: 11px; line-height: 1; font-weight: 600;
+    }
+    .nested-group.is-open h4 .toggle { background: var(--accent-dim); color: var(--bg-base); }
+    /* Direct-child combinator: each .nested-group owns ONLY its own
+       .group-body. Without `>` this is a descendant match, and when an outer
+       group opens, the rule cascades into every inner .group-body and forces
+       them visible too — making nested groups appear pre-expanded. */
+    .nested-group > .group-body { display: none; }
+    .nested-group.is-open > .group-body { display: block; }
+    .nested-group .empty-small {
+      padding: 8px; color: var(--text-dim); font-size: 11px; font-style: italic;
+      font-family: var(--font-ui);
+    }
+    /* Don't make this an inner scroll container — that breaks position:sticky
+       on the root table's header. Horizontal overflow is fine to fall through
+       to .main, which is the real scroll container for the page. */
+    .nested-group .nested-group-tbl-wrap { overflow: visible; }
+    .truncated { color: var(--text-dim); font-style: italic; }
+    .uuid { color: var(--text-dim); }
+    .null { color: var(--text-dim); font-style: italic; }
+    .bool-true { color: var(--color-grounded-dim); }
+    .bool-false { color: var(--color-denied-dim); }
+    .loading { color: var(--text-muted); font-size: 11px; padding: 6px 12px; }
+    .err { color: var(--color-denied-dim); padding: 6px 12px; }
+
+    /* Realtime feedback */
+    .live-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-family: var(--font-ui); font-size: 10px;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-muted); margin-left: auto; padding-right: 6px;
+    }
+    .live-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--color-denied-dim);
+      box-shadow: 0 0 0 0 rgba(0,0,0,0);
+    }
+    .live-pill.is-live .live-dot {
+      background: var(--color-grounded-dim);
+      animation: livepulse 2s infinite;
+    }
+    @keyframes livepulse {
+      0%   { box-shadow: 0 0 0 0 rgba(120, 192, 132, 0.45); }
+      70%  { box-shadow: 0 0 0 7px rgba(120, 192, 132, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(120, 192, 132, 0); }
+    }
+    @keyframes rowflash {
+      0%   { background: rgba(217,119,87,0.28); }
+      100% { background: transparent; }
+    }
+    .gtbl tr.row-flash > td { animation: rowflash 1.6s ease-out; }
+
+    /* Nested-group count gets a brief flash when a live row arrives so
+       the user can spot which collapsed group just grew. */
+    @keyframes countflash {
+      0%   { color: var(--accent-bright); }
+      100% { color: var(--accent-dim); }
+    }
+    .nested-group h4 .count.count-flash { animation: countflash 1.6s ease-out; }
+  </style>
+</head>
+<body>
+<div class="page">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">ACME<span class="dot">·</span>OPS</span></div>
+    <nav class="nav">
+      <a href="/chat">Chat</a>
+      <a href="/traces">Traces</a>
+      {% if user.primary_role == 'admin' %}
+      <a href="/eval">Eval</a>
+      <a class="active" href="/db-explorer">DB Explorer</a>
+      {% endif %}
+    </nav>
+    <div class="spacer"></div>
+    <span class="mono" style="font-size:11px; color: var(--text-secondary);">{{ user.username }}</span>
+    <span class="badge badge-needsreview" style="font-size:9px;">{{ user.primary_role }}</span>
+  </header>
+
+  <div class="body">
+    <aside class="sidebar">
+      <h2>Root table</h2>
+      <ul id="table-list"></ul>
+    </aside>
+
+    <main class="main">
+      <div class="main-header">
+        <h1 id="root-title">Pick a table to start</h1>
+        <span class="hint" id="root-hint">Click any <b>+</b> next to a value to drill into its related rows.</span>
+        <span class="live-pill" id="live-pill" title="WebSocket connection status">
+          <span class="live-dot"></span><span id="live-text">offline</span>
+        </span>
+      </div>
+      <div class="grid-wrap">
+        <div id="root-grid">
+          <div class="empty">Choose a table from the left.</div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+  const META = {{ metadata_json|safe }};
+
+  // ─── Sidebar ─────────────────────────────────────────────────────────────
+  const tableList = document.getElementById('table-list');
+  for (const t of META.tables) {
+    const li = document.createElement('li');
+    li.textContent = t;
+    li.dataset.table = t;
+    li.addEventListener('click', () => selectRoot(t));
+    tableList.appendChild(li);
+  }
+
+  // ─── Rendering helpers ───────────────────────────────────────────────────
+  function rawString(value) {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  }
+  function fmtCell(value) {
+    if (value === null || value === undefined) return '<span class="null">null</span>';
+    if (typeof value === 'boolean') {
+      return `<span class="${value ? 'bool-true' : 'bool-false'}">${value}</span>`;
+    }
+    if (typeof value === 'object') {
+      const s = JSON.stringify(value);
+      return s.length > 80 ? `<span class="truncated">${escapeHtml(s.slice(0, 78))}…</span>` : escapeHtml(s);
+    }
+    const s = String(value);
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) {
+      return `<span class="uuid">${escapeHtml(s.slice(0, 8))}…</span>`;
+    }
+    if (s.length > 80) return `<span class="truncated">${escapeHtml(s.slice(0, 78))}…</span>`;
+    return escapeHtml(s);
+  }
+  function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function escapeAttr(s) { return escapeHtml(s); }
+
+  function renderTable(table, columns, rows, links, ancestors, filter) {
+    const ancestorSet = new Set(ancestors || []);
+    const wrap = document.createElement('div');
+    wrap.className = 'nested-group-tbl-wrap';
+    // Record the drill path on the wrap itself so the click handler can read
+    // it without walking the DOM. CSV of table names from root → here.
+    wrap.dataset.ancestors = (ancestors || []).join(',');
+    const tbl = document.createElement('table');
+    tbl.className = 'gtbl';
+    // Tag every rendered table so the WS handler can find ALL tables on the
+    // page that show rows of the changed entity and update each of them.
+    // `data-filter-*` is the WHERE clause that built this table — used at
+    // event time to decide whether an incoming row actually belongs here.
+    tbl.dataset.table = table;
+    if (filter && filter.field) {
+      tbl.dataset.filterField = filter.field;
+      tbl.dataset.filterValue = String(filter.value);
+    }
+    // Stash the column list as JSON so the live-update path can build new
+    // rows in the same shape without re-fetching column metadata.
+    tbl.dataset.columns = JSON.stringify(columns);
+    tbl.dataset.links = JSON.stringify(links || {});
+    if (!rows.length) {
+      // Even an empty table needs to exist in the DOM so live inserts can
+      // land — render a thead-only table with a placeholder tbody.
+      const thead = document.createElement('thead');
+      const trh = document.createElement('tr');
+      for (const c of columns) {
+        const th = document.createElement('th');
+        th.textContent = c;
+        trh.appendChild(th);
+      }
+      thead.appendChild(trh);
+      tbl.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      tbl.appendChild(tbody);
+      wrap.appendChild(tbl);
+      const note = document.createElement('div');
+      note.className = 'empty-small';
+      note.textContent = `No rows in ${table} yet — live updates will appear here.`;
+      wrap.appendChild(note);
+      return wrap;
+    }
+
+    // header
+    const thead = document.createElement('thead');
+    const trh = document.createElement('tr');
+    for (const c of columns) {
+      const th = document.createElement('th');
+      th.textContent = c;
+      trh.appendChild(th);
+    }
+    thead.appendChild(trh);
+    tbl.appendChild(thead);
+
+    // body
+    const tbody = document.createElement('tbody');
+    for (const row of rows) {
+      const tr = document.createElement('tr');
+      for (const c of columns) {
+        const td = document.createElement('td');
+        const val = row[c];
+        // Filter out links whose target is already on the drill path —
+        // prevents the "customers → issues → customers" backwards loop.
+        const allFieldLinks = (links && links[c]) || [];
+        const fieldLinks = allFieldLinks.filter(l => !ancestorSet.has(l.target));
+        // Native tooltip on every cell carries the FULL value, so even cells
+        // that fit my JS length cap but get cut by the column max-width still
+        // reveal the whole text on hover.
+        const fullText = rawString(val);
+        if (fullText) td.title = fullText;
+        td.innerHTML = `<span class="cell">${fmtCell(val)}` + (
+          fieldLinks.length && val != null
+            ? `<button class="expand-btn" data-table="${table}" data-field="${c}" data-value="${escapeAttr(String(val))}" title="${escapeAttr(fieldLinks.map(l => l.label).join(' · '))}">+</button>`
+            : ''
+        ) + `</span>`;
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    tbl.appendChild(tbody);
+    wrap.appendChild(tbl);
+    return wrap;
+  }
+
+  // ─── Drill-down logic ────────────────────────────────────────────────────
+  // Walk up the DOM from the "+" button to find the nearest wrap and read
+  // its drill path. The root table has just [rootTable]; nested tables have
+  // the full ancestor chain.
+  function ancestorsFor(buttonEl) {
+    const wrap = buttonEl.closest('.nested-group-tbl-wrap');
+    if (!wrap || !wrap.dataset.ancestors) return [];
+    return wrap.dataset.ancestors.split(',').filter(Boolean);
+  }
+
+  // Delegated click for all "+" buttons inside #root-grid.
+  document.getElementById('root-grid').addEventListener('click', async (e) => {
+    const btn = e.target.closest('.expand-btn');
+    if (!btn) return;
+    const parentRow = btn.closest('tr');
+    if (!parentRow) return;
+
+    // Toggle: if already open, collapse.
+    const nextRow = parentRow.nextElementSibling;
+    if (nextRow && nextRow.classList.contains('nested-host') && nextRow.dataset.owner === btn.dataset.field + ':' + btn.dataset.value) {
+      nextRow.remove();
+      parentRow.classList.remove('parent-row');
+      btn.classList.remove('open');
+      btn.textContent = '+';
+      return;
+    }
+
+    btn.classList.add('open');
+    btn.textContent = '−';
+    parentRow.classList.add('parent-row');
+
+    // Insert host row with "loading"
+    const host = document.createElement('tr');
+    host.className = 'nested-host';
+    host.dataset.owner = btn.dataset.field + ':' + btn.dataset.value;
+    const td = document.createElement('td');
+    td.colSpan = parentRow.children.length;
+    td.innerHTML = '<div class="loading">Loading related rows…</div>';
+    host.appendChild(td);
+    parentRow.parentNode.insertBefore(host, parentRow.nextSibling);
+
+    const callerAncestors = ancestorsFor(btn);
+
+    try {
+      const url = `/db-explorer/related/${encodeURIComponent(btn.dataset.table)}/${encodeURIComponent(btn.dataset.field)}?value=${encodeURIComponent(btn.dataset.value)}`;
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      td.innerHTML = '';
+      const wrap = document.createElement('div');
+      wrap.className = 'nested';
+      const hdr = document.createElement('div');
+      hdr.className = 'nested-header';
+      hdr.innerHTML = `from <b>${escapeHtml(btn.dataset.table)}.${escapeHtml(btn.dataset.field)}</b> = <b>${escapeHtml(btn.dataset.value.slice(0, 30))}${btn.dataset.value.length > 30 ? '…' : ''}</b>`;
+      wrap.appendChild(hdr);
+      // Skip groups whose target table is already on the drill path —
+      // a "+" should never offer to loop back into an ancestor.
+      const visibleGroups = data.groups.filter(g => !callerAncestors.includes(g.target));
+      const skipped = data.groups.length - visibleGroups.length;
+      if (!visibleGroups.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-small';
+        empty.textContent = skipped
+          ? `All ${skipped} related rowset(s) point back into the current drill path — nothing new to show.`
+          : 'No related rows.';
+        wrap.appendChild(empty);
+      }
+      for (const grp of visibleGroups) {
+        const g = document.createElement('div');
+        g.className = 'nested-group';
+        // Stash the drill coordinates so a stale group can re-fetch itself.
+        g.dataset.source = JSON.stringify({
+          table: btn.dataset.table, field: btn.dataset.field,
+          value: btn.dataset.value, target: grp.target,
+        });
+        const h = document.createElement('h4');
+        // Make the filter clause visible — drives home that we're showing
+        // ALL rows of target where (target_field = caller value), NOT a
+        // semantic intersection with the higher drill ancestors.
+        const filterStr = `${escapeHtml(grp.target)}.${escapeHtml(grp.target_field || '?')} = ${escapeHtml((btn.dataset.value || '').slice(0, 20))}${btn.dataset.value.length > 20 ? '…' : ''}`;
+        h.innerHTML = `<span class="toggle">+</span>${escapeHtml(grp.label)} <span class="count">· ${grp.row_count} where ${filterStr}</span>`;
+        g.appendChild(h);
+        // Render the table inside a collapsed `group-body` div. Click on the
+        // header toggles `.is-open`, revealing the table. Each group is
+        // collapsed by default so the user expands explicitly.
+        const body = document.createElement('div');
+        body.className = 'group-body';
+        const nestedAncestors = [...callerAncestors, grp.target];
+        // This nested table's filter is "rows of grp.target where
+        // grp.target_field equals the caller's value". Recorded on the
+        // rendered <table> so live events can decide whether to land here.
+        const nestedFilter = { field: grp.target_field, value: btn.dataset.value };
+        body.appendChild(renderTable(grp.target, grp.columns, grp.rows, grp.links, nestedAncestors, nestedFilter));
+        g.appendChild(body);
+        h.addEventListener('click', () => {
+          const open = g.classList.toggle('is-open');
+          h.querySelector('.toggle').textContent = open ? '−' : '+';
+        });
+        wrap.appendChild(g);
+      }
+      td.appendChild(wrap);
+    } catch (err) {
+      td.innerHTML = `<div class="err">Failed to load related rows: ${escapeHtml(err.message)}</div>`;
+    }
+  });
+
+  // ─── Realtime WebSocket (D-018) ──────────────────────────────────────────
+  // Single WS receives all DB change events. Locally we:
+  //   - If event.table === currentRoot → insert/update that row in the grid
+  //   - Mark any open nested-group whose target === event.table as "stale"
+  //     so the user knows to re-click and refresh.
+  let currentRoot = null;
+  let liveSocket = null;
+  let liveBackoffMs = 1000;
+
+  function setLive(state, text) {
+    const pill = document.getElementById('live-pill');
+    pill.classList.toggle('is-live', state === 'live');
+    document.getElementById('live-text').textContent = text;
+  }
+
+  function buildRowTrFor(table, row, columns, links, ancestors) {
+    // Build one <tr> with the same shape as renderTable so we can insert
+    // it into the existing tbody without re-rendering the whole table.
+    const ancestorSet = new Set(ancestors || [table]);
+    const tr = document.createElement('tr');
+    for (const c of columns) {
+      const td = document.createElement('td');
+      const val = row[c];
+      const allFieldLinks = (links && links[c]) || [];
+      const fieldLinks = allFieldLinks.filter(l => !ancestorSet.has(l.target));
+      const fullText = rawString(val);
+      if (fullText) td.title = fullText;
+      td.innerHTML = `<span class="cell">${fmtCell(val)}` + (
+        fieldLinks.length && val != null
+          ? `<button class="expand-btn" data-table="${table}" data-field="${c}" data-value="${escapeAttr(String(val))}" title="${escapeAttr(fieldLinks.map(l => l.label).join(' · '))}">+</button>`
+          : ''
+      ) + `</span>`;
+      tr.appendChild(td);
+    }
+    return tr;
+  }
+
+  function pkColumn(table) { return table === 'action_catalogue' ? 'action_type' : 'id'; }
+
+  // Apply a single (table, op, id) event to every rendered table on the
+  // page whose displayed entity matches. Each rendered table records its
+  // own filter; we only insert/update rows that satisfy that filter, so:
+  //   - the root table (no filter) always accepts changes for its table
+  //   - a nested "conversations where username = sam.support" accepts the
+  //     new conversation if the row's username really is sam.support
+  //   - other unrelated nested tables silently ignore the event
+  // Currently-open groups visually flash; collapsed groups update silently
+  // so when the user later opens them, the new row is already present.
+  async function applyEventEverywhere(event) {
+    // Find every rendered table that displays this entity. If none — and
+    // the root isn't watching this table either — skip the row fetch.
+    const candidates = Array.from(document.querySelectorAll('table.gtbl'))
+      .filter(t => t.dataset.table === event.table);
+    if (!candidates.length) return;
+
+    let payload;
+    try {
+      const resp = await fetch(`/db-explorer/row/${encodeURIComponent(event.table)}/${encodeURIComponent(event.id)}`);
+      if (!resp.ok) return;
+      payload = await resp.json();
+    } catch (_) { return; }
+
+    const pk = pkColumn(event.table);
+    for (const tbl of candidates) {
+      // Filter test: does the fetched row belong in this particular table?
+      const ff = tbl.dataset.filterField;
+      const fv = tbl.dataset.filterValue;
+      if (ff && String(payload.row[ff]) !== fv) continue;
+
+      // Each table records its own ancestor list and column metadata so it
+      // can build a new <tr> matching its own column order.
+      const wrap = tbl.parentElement;
+      const ancestors = (wrap && wrap.dataset.ancestors)
+        ? wrap.dataset.ancestors.split(',') : [payload.table];
+      const columns = tbl.dataset.columns
+        ? JSON.parse(tbl.dataset.columns) : payload.columns;
+      const links = tbl.dataset.links
+        ? JSON.parse(tbl.dataset.links) : payload.links;
+
+      let tbody = tbl.querySelector('tbody');
+      if (!tbody) { tbody = document.createElement('tbody'); tbl.appendChild(tbody); }
+
+      // Find existing row by PK (matched against the full value stored as
+      // td.title for the PK column).
+      const pkIdx = columns.indexOf(pk);
+      const existing = pkIdx >= 0 ? Array.from(tbody.children).find(tr => {
+        const cell = tr.children[pkIdx];
+        return cell && cell.title === String(event.id);
+      }) : null;
+
+      const newTr = buildRowTrFor(payload.table, payload.row, columns, links, ancestors);
+      newTr.classList.add('row-flash');
+      if (existing) {
+        existing.replaceWith(newTr);
+      } else {
+        tbody.insertBefore(newTr, tbody.firstChild);
+        // If this is a nested table, bump the count in its group header
+        // and flash the count so a collapsed group is visibly "growing".
+        const group = tbl.closest('.nested-group');
+        if (group) {
+          const countEl = group.querySelector(':scope > h4 .count');
+          if (countEl) {
+            const m = countEl.textContent.match(/·\s*(\d+)/);
+            if (m) {
+              const newN = parseInt(m[1], 10) + 1;
+              countEl.textContent = countEl.textContent.replace(/·\s*\d+/, `· ${newN}`);
+              countEl.classList.remove('count-flash');
+              void countEl.offsetWidth; // restart animation
+              countEl.classList.add('count-flash');
+            }
+          }
+        }
+      }
+      setTimeout(() => newTr.classList.remove('row-flash'), 1700);
+    }
+  }
+
+  function connectLive() {
+    if (liveSocket && liveSocket.readyState !== WebSocket.CLOSED) return;
+    setLive('connecting', 'connecting…');
+    const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+    const url = `${scheme}://${location.host}/db-explorer/ws`;
+    const ws = new WebSocket(url);
+    liveSocket = ws;
+    ws.onopen = () => {
+      liveBackoffMs = 1000;
+      setLive('live', 'live');
+    };
+    ws.onmessage = async (evt) => {
+      let msg;
+      try { msg = JSON.parse(evt.data); } catch (_) { return; }
+      if (msg && msg.table && msg.id) {
+        await applyEventEverywhere(msg);
+      }
+    };
+    ws.onerror = () => {
+      // onclose will follow; nothing to do here.
+    };
+    ws.onclose = () => {
+      setLive('offline', 'offline');
+      // Reconnect with exponential backoff (capped at 30s).
+      setTimeout(connectLive, liveBackoffMs);
+      liveBackoffMs = Math.min(liveBackoffMs * 2, 30000);
+    };
+  }
+  connectLive();
+
+  // ─── Root table selection ────────────────────────────────────────────────
+  async function selectRoot(table) {
+    currentRoot = table;
+    for (const li of tableList.children) li.classList.toggle('active', li.dataset.table === table);
+    document.getElementById('root-title').textContent = table;
+    const grid = document.getElementById('root-grid');
+    grid.innerHTML = '<div class="loading">Loading…</div>';
+    try {
+      const resp = await fetch(`/db-explorer/rows/${encodeURIComponent(table)}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      grid.innerHTML = '';
+      const headline = document.createElement('div');
+      headline.className = 'nested-header';
+      headline.innerHTML = `<b>${data.row_count}</b> rows (showing first ${data.row_count})`;
+      grid.appendChild(headline);
+      // Root call seeds the ancestor list with just the root table and has
+      // no filter — it shows everything in the table.
+      grid.appendChild(renderTable(data.table, data.columns, data.rows, data.links, [data.table], null));
+    } catch (err) {
+      grid.innerHTML = `<div class="err">Failed to load: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+</script>
+</body>
+</html>
