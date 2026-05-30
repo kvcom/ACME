@@ -8,7 +8,6 @@ recovery from malformed LLM JSON.
 import pytest
 
 from acme_app.application.planner import create_plan
-from acme_app.application.orchestrator import _deterministic_route_for_current_message
 from acme_app.infrastructure.llm.providers.auto_provider import (
     PRIORITY_CHAIN,
     ROUTE_CHAINS,
@@ -21,7 +20,7 @@ from acme_app.infrastructure.llm.providers.auto_provider import (
 
 
 def test_priority_chain_has_single_local_model_first():
-    """Auto exposes only Llama as the local model; Qwen is removed."""
+    """Auto exposes a single local Ollama model slot."""
     chain = PRIORITY_CHAIN
     assert chain[0] == 'ollama-llama'
     assert 'ollama-qwen' not in chain
@@ -56,13 +55,6 @@ def test_deterministic_auto_route_write_takes_precedence():
     )
 
     assert decision.route == 'write_proposal'
-
-
-def test_current_message_customer_selection_routes_to_customer_read():
-    decision = _deterministic_route_for_current_message('Acme Logistics Europe')
-
-    assert decision.route == 'customer_read'
-    assert decision.source == 'rules'
 
 
 def test_auto_provider_no_keys_results_in_unavailable(monkeypatch):
@@ -384,16 +376,12 @@ async def test_create_plan_infers_unknown_intent_from_valid_steps(monkeypatch):
     )
 
     assert plan.intent == 'customer_status'
-    assert [step.name for step in plan.steps] == [
-        'get_open_issues',
-        'get_customer_profile',
-        'customer_escalation_summary',
-    ]
+    assert [step.name for step in plan.steps] == ['get_open_issues']
 
 
 @pytest.mark.asyncio
-async def test_create_plan_adds_customer_status_fallback_when_local_returns_no_steps(monkeypatch):
-    """A clear customer briefing should not become a 0-step local response."""
+async def test_create_plan_does_not_add_tool_steps_when_model_returns_none(monkeypatch):
+    """Tool selection belongs to the LLM; guardrails validate, they do not add tools."""
     from acme_app.infrastructure.llm.providers.base import LLMResponse
 
     class _Provider:
@@ -419,19 +407,14 @@ async def test_create_plan_adds_customer_status_fallback_when_local_returns_no_s
         {'role': 'support_user'},
     )
 
-    assert plan.intent == 'customer_status'
-    assert plan.requires_clarification is False
-    assert [step.name for step in plan.steps] == [
-        'get_customer_profile',
-        'get_open_issues',
-        'customer_escalation_summary',
-    ]
-    assert all(step.arguments == {'customer_name': 'Northwind'} for step in plan.steps)
+    assert plan.intent == 'clarify'
+    assert plan.requires_clarification is True
+    assert plan.steps == []
 
 
 @pytest.mark.asyncio
-async def test_create_plan_augments_partial_customer_status_plan(monkeypatch):
-    """If Llama returns only one lookup, add the rest of the briefing steps."""
+async def test_create_plan_keeps_partial_model_plan_without_augmenting(monkeypatch):
+    """A valid partial plan stays model-authored; no deterministic tools are appended."""
     from acme_app.infrastructure.llm.providers.base import LLMResponse
 
     class _Provider:
@@ -463,11 +446,7 @@ async def test_create_plan_augments_partial_customer_status_plan(monkeypatch):
         {'role': 'support_user'},
     )
 
-    assert [step.name for step in plan.steps] == [
-        'get_open_issues',
-        'get_customer_profile',
-        'customer_escalation_summary',
-    ]
+    assert [step.name for step in plan.steps] == ['get_open_issues']
 
 
 @pytest.mark.asyncio
@@ -497,11 +476,7 @@ async def test_create_plan_dedupes_repeated_valid_steps(monkeypatch):
 
     names = [step.name for step in plan.steps]
     assert names.count('get_open_issues') == 1
-    assert names == [
-        'get_open_issues',
-        'get_customer_profile',
-        'customer_escalation_summary',
-    ]
+    assert names == ['get_open_issues']
 
 
 def test_llm_unavailable_error_is_runtime_error():

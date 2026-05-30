@@ -2,7 +2,7 @@
 
 Auto is a two-stage router:
 
-    1. Classify the request with local Llama (Ollama) into a small route.
+    1. Classify the request with the local Ollama model into a small route.
     2. Try the execution chain for that route, falling through on failure.
 
 The classifier decides the route, not the final business truth. Tools still
@@ -68,7 +68,7 @@ _SECURITY_ROUTE_RE = re.compile(
 )
 
 ROUTE_CHAINS: dict[str, list[str]] = {
-    # Read-only, low-risk tasks can use local Llama for execution too.
+    # Read-only, low-risk tasks can use the local model for execution too.
     'issue_read': ['ollama-llama', 'gpt-5.4-mini', 'gemini-3.5-flash'],
     'customer_read': ['ollama-llama', 'gpt-5.4-mini', 'gemini-3.5-flash'],
     'summary': ['ollama-llama', 'gemini-3.5-flash', 'gpt-5.4-mini'],
@@ -269,7 +269,7 @@ async def _arbitrate_route(
         f'Context JSON:\n{json.dumps(context, default=str)[:2000]}\n\n'
         f'User request:\n{user_prompt[:4000]}\n\n'
         f'Rule classifier chose: {rules_decision.route} ({rules_decision.reason})\n'
-        f'Local Llama classifier chose: {llama_decision.route} ({llama_decision.reason})\n\n'
+        f'Local Ollama classifier chose: {llama_decision.route} ({llama_decision.reason})\n\n'
         'Return exactly: {"route": "...", "confidence": 0.0, "reason": "..."}'
     )
     last_error: Exception | None = None
@@ -301,7 +301,7 @@ async def classify_route(
     context: dict[str, Any],
     arbiter_model_key: str | None = None,
 ) -> RouteDecision:
-    """Classify every request with rules + local Llama, arbitrate disagreement."""
+    """Classify every request with rules + local Ollama, arbitrate disagreement."""
     rules_task = asyncio.to_thread(_deterministic_route, user_prompt)
     llama_task = _classify_with_llama(user_prompt, context)
     rules_decision, llama_decision = await asyncio.gather(rules_task, llama_task)
@@ -372,8 +372,8 @@ class AutoProvider(LLMProvider):
         # Direct ambiguity override: when tools surfaced multiple_matches the
         # orchestrator sets facts.ambiguous_customer. This takes precedence
         # over the plan's original route — we MUST use the clarification
-        # chain (which excludes ollama-llama by construction) because a 7B
-        # model cannot be relied on to strictly follow a schema instruction
+        # chain (which excludes ollama-llama by construction) because a local
+        # model may not strictly follow a schema instruction
         # like "list ONLY the candidates from facts.ambiguous_customer.matches".
         # Direct user picks of ollama-llama bypass AutoProvider entirely, so
         # this override only fires when the user picked Auto.

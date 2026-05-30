@@ -1,6 +1,7 @@
 from acme_app.observability.decision_ledger import Ledger, summarise_output
 from acme_app.api.routes_traces import _can_read_trace
 from acme_app.auth.current_user import CurrentUser
+from acme_app.infrastructure.db.repositories import _events_to_evidence
 
 
 def test_ledger_event_collection():
@@ -30,3 +31,24 @@ def test_trace_visibility_owner_or_admin_only():
     assert _can_read_trace(owner, trace)
     assert _can_read_trace(admin, trace)
     assert not _can_read_trace(other, trace)
+
+
+def test_events_to_evidence_prefers_final_response_payload():
+    events = [
+        {'event_type': 'action_proposed', 'event_name': 'action.proposed',
+         'payload': {'evidence': ['issue:ISS-OLD']}},
+        {'event_type': 'final_response', 'event_name': 'narration.complete',
+         'payload': {'evidence': ['customer:CUST-001', 'issue:ISS-102', 'issue:ISS-102']}},
+    ]
+
+    assert _events_to_evidence(events) == ['customer:CUST-001', 'issue:ISS-102']
+
+
+def test_events_to_evidence_falls_back_to_action_payload():
+    events = [
+        {'event_type': 'agent_plan', 'event_name': 'plan.created', 'payload': {}},
+        {'event_type': 'action_proposed', 'event_name': 'action.proposed',
+         'payload': {'evidence': ['issue:ISS-107']}},
+    ]
+
+    assert _events_to_evidence(events) == ['issue:ISS-107']

@@ -228,6 +228,7 @@ async def get_trace(session: AsyncSession, trace_ref: str) -> dict[str, Any] | N
             'status': e[4],
             'created_at': e[5].isoformat(),
         })
+    evidence = _events_to_evidence(normalised_events)
 
     return {
         'trace_ref': row[1], 'otel_trace_id': row[2], 'username': row[3], 'role': row[4],
@@ -239,6 +240,7 @@ async def get_trace(session: AsyncSession, trace_ref: str) -> dict[str, Any] | N
         'llm_latency_ms': row[16], 'tool_latency_ms': row[17], 'total_latency_ms': row[18],
         'created_at': row[19].isoformat() if row[19] else None,
         'events': normalised_events,
+        'evidence': evidence,
         'tool_calls': [
             {'tool_name': t[0], 'input': t[1], 'output_summary': t[2], 'status': t[3], 'latency_ms': t[4], 'error': t[5], 'created_at': t[6].isoformat()}
             for t in tool_calls
@@ -352,6 +354,7 @@ async def get_conversation_history(session: AsyncSession, conversation_ref: str)
         ]
         plan_steps = _events_to_plan_steps(event_dicts)
         choice_kind, choice_options = _events_to_pending_choices(event_dicts, r[4])
+        evidence = _events_to_evidence(event_dicts)
         out.append({
             'user_query': r[1],
             'answer': r[2] or '',
@@ -365,10 +368,45 @@ async def get_conversation_history(session: AsyncSession, conversation_ref: str)
             'intent': r[10],
             'model': r[11],
             'plan_steps': plan_steps,
+            'evidence': evidence,
             'choice_kind': choice_kind,
             'choice_options': choice_options,
         })
     return out
+
+
+def _normalise_evidence_items(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    seen: set[str] = set()
+    evidence: list[str] = []
+    for item in raw:
+        value = str(item).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        evidence.append(value)
+    return evidence
+
+
+def _events_to_evidence(events: list[dict[str, Any]]) -> list[str]:
+    """Return the evidence list attached to the decision outcome.
+
+    The final response is the canonical source for read-only answers. Action
+    proposal and confirmation events are fallbacks for older traces and write
+    flows where the action payload itself carries the supporting records.
+    """
+    for ev in reversed(events):
+        if ev.get('event_type') == 'final_response':
+            evidence = _normalise_evidence_items((ev.get('payload') or {}).get('evidence'))
+            if evidence:
+                return evidence
+    for ev in reversed(events):
+        if ev.get('event_type') in {'action_proposed', 'action_confirmed'}:
+            evidence = _normalise_evidence_items((ev.get('payload') or {}).get('evidence'))
+            if evidence:
+                return evidence
+    return []
 
 
 def _events_to_pending_choices(

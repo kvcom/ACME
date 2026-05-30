@@ -210,7 +210,9 @@
 <body data-conversation-ref="{{ conversation_ref }}"
       data-role="{{ user.primary_role }}"
       data-model-key="{{ default_model_key }}"
-      {% if pending_action %}data-pending-action='{{ pending_action | tojson }}'{% endif %}>
+      {% if latest_evidence %}data-latest-evidence='{{ latest_evidence | tojson | forceescape }}'{% endif %}
+      {% if latest_evidence_trace_ref %}data-latest-evidence-trace-ref="{{ latest_evidence_trace_ref }}"{% endif %}
+      {% if pending_action %}data-pending-action='{{ pending_action | tojson | forceescape }}'{% endif %}>
 <div class="app-slim">
 
   <header class="topbar">
@@ -311,6 +313,15 @@
             <span class="badge badge-{{ turn.badge_class }}">{{ turn.badge }}</span>
             <span class="sep">·</span>
             <a href="/traces/{{ turn.trace_ref }}">{{ turn.trace_ref }}</a>
+            {% if turn.evidence %}
+            <span class="sep">·</span>
+            <button type="button"
+                    class="trace-meta-btn"
+                    data-show-evidence='{{ turn.evidence | tojson | forceescape }}'
+                    data-trace-ref="{{ turn.trace_ref }}">
+              {{ turn.evidence|length }} evidence
+            </button>
+            {% endif %}
             <span class="sep">·</span>${{ '%.4f' % turn.cost_usd }}
             <span class="sep">·</span>{{ turn.total_tokens }} tokens
             <span class="sep">·</span>{{ '%.1f' % (turn.latency_ms / 1000) }}s

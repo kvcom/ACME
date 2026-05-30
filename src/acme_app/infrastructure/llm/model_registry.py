@@ -68,8 +68,8 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
 
     # Local — Ollama (no per-token cost).
     'ollama-llama': ModelSpec(
-        key='ollama-llama', provider='ollama', model='llama3.1:8b',
-        label='Llama 3.1 8B (local)', badge='local',
+        key='ollama-llama', provider='ollama', model='qwen3.5:9b',
+        label='Qwen3.5 9B (local)', badge='local',
     ),
 }
 

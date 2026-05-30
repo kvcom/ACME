@@ -316,6 +316,36 @@
     }
   })();
 
+  (function restoreLatestEvidence() {
+    if (document.body.dataset.pendingAction) return;
+    const raw = document.body.dataset.latestEvidence;
+    if (!raw) return;
+    try {
+      const evidence = JSON.parse(raw);
+      if (evidence && evidence.length) {
+        setEvidence(evidence, {
+          label: 'Latest response',
+          traceRef: document.body.dataset.latestEvidenceTraceRef || '',
+        });
+      }
+    } catch (e) {
+      console.warn('[acme] failed to parse latest evidence', e);
+    }
+  })();
+
+  document.querySelectorAll('[data-show-evidence]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      try {
+        setEvidence(JSON.parse(btn.dataset.showEvidence || '[]'), {
+          label: 'Selected response',
+          traceRef: btn.dataset.traceRef || '',
+        });
+      } catch (e) {
+        console.warn('[acme] failed to parse history evidence', e);
+      }
+    });
+  });
+
   async function renderAnswerTyped(answerRegion, r) {
     const wrap = document.createElement('div');
     wrap.className = 'md-answer';
@@ -352,6 +382,18 @@
   // ── Right-rail panels ─────────────────────────────────────────────────
   function clearRail() { railEl.innerHTML = ''; }
 
+  function evidenceParts(item) {
+    const raw = String(item || '');
+    if (raw.includes(':')) {
+      const [kind, id] = raw.split(':', 2);
+      return {kind, id};
+    }
+    if (/^ISS-\d+/i.test(raw)) return {kind: 'issue', id: raw.toUpperCase()};
+    if (/^UPD-\d+/i.test(raw)) return {kind: 'update', id: raw.toUpperCase()};
+    if (/^CUST[-_]/i.test(raw)) return {kind: 'customer', id: raw};
+    return {kind: 'record', id: raw};
+  }
+
   function ensureEvidencePanel() {
     let panel = railEl.querySelector('[data-role="evidence-panel"]');
     if (!panel) {
@@ -361,6 +403,7 @@
             <span class="label">Evidence</span>
             <span class="mono dim" style="font-size:10px;" data-role="ev-count">0 records · live</span>
           </div>
+          <div class="panel-body panel-divider" style="padding: 8px 12px; display:none;" data-role="ev-context"></div>
           <div class="panel-body" style="padding: 6px;" data-role="ev-list"></div>
         </div>`);
       panel = railEl.querySelector('[data-role="evidence-panel"]');
@@ -368,19 +411,29 @@
     return panel;
   }
 
-  function setEvidence(items) {
+  function setEvidence(items, meta = {}) {
     if (!items || !items.length) return;
     const panel = ensureEvidencePanel();
     const list = panel.querySelector('[data-role="ev-list"]');
+    const context = panel.querySelector('[data-role="ev-context"]');
     list.innerHTML = '';
     items.slice(0, 20).forEach(item => {
-      const [kind, id] = String(item).includes(':') ? String(item).split(':', 2) : ['ref', String(item)];
+      const {kind, id} = evidenceParts(item);
       const li = document.createElement('div');
       li.className = 'ev-item';
       li.innerHTML = `<span class="ref">${escape(id.slice(0, 14))}</span><span class="desc">${escape(kind)}</span>`;
       list.appendChild(li);
     });
     panel.querySelector('[data-role="ev-count"]').textContent = `${items.length} record${items.length === 1 ? '' : 's'}`;
+    if (context) {
+      const bits = [];
+      if (meta.label) bits.push(escape(meta.label));
+      if (meta.traceRef) bits.push(`<a href="/traces/${encodeURIComponent(meta.traceRef)}">${escape(meta.traceRef)}</a>`);
+      context.style.display = bits.length ? '' : 'none';
+      context.innerHTML = bits.length
+        ? `<div class="trace-meta" style="margin-top:0;">${bits.join('<span class="sep">·</span>')}</div>`
+        : '';
+    }
   }
 
   function renderProposedActionCard(pa) {
@@ -777,7 +830,7 @@
       if (r.proposed_action) {
         renderProposedActionCard(r.proposed_action);
       } else if (evidenceAccum.length && r.badge !== 'Permission Denied' && r.badge !== 'Adversarial Input Blocked') {
-        setEvidence(evidenceAccum);
+        setEvidence(evidenceAccum, {label: 'Latest response', traceRef: r.trace_ref});
       }
 
       sendBtn.disabled = false;

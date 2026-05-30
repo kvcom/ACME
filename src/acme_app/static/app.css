@@ -652,6 +652,15 @@ table.tbl tr:hover td { background: var(--bg-surface-raised); }
   cursor: pointer;
 }
 .trace-meta a:hover { color: var(--accent-dim); }
+.trace-meta-btn {
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+.trace-meta-btn:hover { color: var(--accent-dim); }
 .trace-meta .sep { color: var(--text-dim); padding: 0 6px; }
 
 /* Sidebar footer · provider switcher per brief */

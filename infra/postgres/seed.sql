@@ -1,3 +1,27 @@
+-- Users (mirror of the Keycloak `acme` realm; see DECISION_LOG D-016).
+-- Postgres is the source of truth for role assignment; Keycloak only
+-- authenticates the bearer.
+INSERT INTO users (username, email, display_name) VALUES
+('sarah.sales',  'sarah.sales@example.local',  'Sarah Sales'),
+('sam.support',  'sam.support@example.local',  'Sam Support'),
+('admin.acme',   'admin.acme@example.local',   'Admin Acme')
+ON CONFLICT (username) DO NOTHING;
+
+INSERT INTO user_roles (user_id, role_name, granted_by)
+SELECT u.id, 'sales_user', 'seed'
+FROM users u WHERE u.username = 'sarah.sales'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO user_roles (user_id, role_name, granted_by)
+SELECT u.id, 'support_user', 'seed'
+FROM users u WHERE u.username = 'sam.support'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO user_roles (user_id, role_name, granted_by)
+SELECT u.id, 'admin', 'seed'
+FROM users u WHERE u.username = 'admin.acme'
+ON CONFLICT DO NOTHING;
+
 -- Customers
 INSERT INTO customers (name, industry, tier, region, customer_timezone, account_owner) VALUES
 ('Northwind Energy', 'Energy', 'Enterprise', 'UK', 'Europe/London', 'Sarah Sales'),

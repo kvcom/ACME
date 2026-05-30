@@ -8,7 +8,6 @@ trace events). This keeps the planner pure.
 from __future__ import annotations
 
 import json
-import re
 import time
 from typing import Any
 
@@ -17,68 +16,6 @@ from acme_app.application.prompts import HARDENING_PREAMBLE
 from acme_app.application.schemas import AgentPlan, PlanStep
 from acme_app.infrastructure.llm.provider import get_provider
 from acme_app.infrastructure.llm.providers.base import LLMResponse
-
-
-_CUSTOMER_STATUS_RE = re.compile(
-    r'\b(open issues|latest status|status|recommended next step|next step|brief|call with)\b',
-    re.I,
-)
-_CUSTOMER_HINT_PATTERNS = (
-    re.compile(r'\bcall with\s+([A-Z][A-Za-z0-9 &.-]+?)(?:\s+today|[.?!,]|$)', re.I),
-    re.compile(r'\b(?:for|about|with)\s+([A-Z][A-Za-z0-9 &.-]+?)(?:\s+issue\b|\s+today|[.?!,]|$)', re.I),
-)
-
-
-def _extract_customer_hint(query: str) -> str | None:
-    for pattern in _CUSTOMER_HINT_PATTERNS:
-        match = pattern.search(query)
-        if match:
-            value = match.group(1).strip()
-            if value:
-                return value
-    return None
-
-
-def _deterministic_fallback_steps(query: str) -> tuple[str, list[PlanStep]]:
-    """Provide stable tool plans for obvious workflows when a small model drifts."""
-    customer = _extract_customer_hint(query)
-    if customer and _CUSTOMER_STATUS_RE.search(query):
-        return 'customer_status', [
-            PlanStep(
-                step_type='tool',
-                name='get_customer_profile',
-                arguments={'customer_name': customer},
-                rationale='Fetch customer profile for the requested briefing.',
-            ),
-            PlanStep(
-                step_type='tool',
-                name='get_open_issues',
-                arguments={'customer_name': customer},
-                rationale='Retrieve open issues and current statuses for the customer.',
-            ),
-            PlanStep(
-                step_type='skill',
-                name='customer_escalation_summary',
-                arguments={'customer_name': customer},
-                rationale='Summarise customer risk and recommended next action.',
-            ),
-        ]
-    return 'unknown', []
-
-
-def _merge_required_steps(existing: list[PlanStep], required: list[PlanStep]) -> list[PlanStep]:
-    """Append required deterministic steps that the model omitted."""
-    merged = list(existing)
-    seen = {
-        (step.step_type, step.name, json.dumps(step.arguments, sort_keys=True))
-        for step in merged
-    }
-    for step in required:
-        step_key = (step.step_type, step.name, json.dumps(step.arguments, sort_keys=True))
-        if step_key not in seen:
-            seen.add(step_key)
-            merged.append(step)
-    return merged
 
 
 def _fallback_intent(query: str, steps: list[Any], write_requested: bool) -> str:
@@ -167,13 +104,6 @@ async def create_plan(query: str, provider_name: str, context: dict[str, Any]) -
             seen_steps.add(step_key)
             cleaned.append(step)
     plan.steps = cleaned
-    if not plan.write_requested:
-        fallback_intent, fallback_steps = _deterministic_fallback_steps(query)
-        if fallback_steps:
-            plan.intent = fallback_intent if plan.intent in {'', 'unknown', 'null', 'none', 'clarify'} else plan.intent
-            plan.steps = _merge_required_steps(plan.steps, fallback_steps)
-            plan.requires_clarification = False
-            plan.clarification_question = None
     if plan.intent in {'', 'unknown', 'null', 'none'}:
         plan.intent = _fallback_intent(query, plan.steps, plan.write_requested)
     return plan, response

@@ -201,6 +201,23 @@
       </div>
 
       <div class="meta-block">
+        <span class="label">Evidence</span>
+        {% if trace.evidence %}
+        <div class="kv" style="grid-template-columns: 1fr;">
+          {% for item in trace.evidence %}
+          {% set parts = item.split(':', 1) %}
+          <div class="ev-item" style="padding-left:0; padding-right:0;">
+            <span class="ref">{{ parts[1] if parts|length == 2 else item }}</span>
+            <span class="desc">{{ parts[0] if parts|length == 2 else 'record' }}</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p style="font-family: var(--font-mono); font-size: 10px; color: var(--text-dim);">No evidence links recorded for this trace.</p>
+        {% endif %}
+      </div>
+
+      <div class="meta-block">
         <span class="label">RBAC decisions</span>
         {% if trace.rbac_decisions %}
         <div class="kv" style="grid-template-columns: 1fr;">
@@ -226,7 +243,7 @@
       <div class="graph-title">
         <div>
           <div class="t">Evidence-to-Action Decision Graph</div>
-          <div class="s">{{ trace.events|length }} events · {{ trace.tool_calls|length }} tool calls · {{ trace.rbac_decisions|length }} rbac checks</div>
+          <div class="s">{{ trace.events|length }} events · {{ trace.tool_calls|length }} tool calls · {{ trace.rbac_decisions|length }} rbac checks · {{ trace.evidence|length }} evidence</div>
         </div>
       </div>
 

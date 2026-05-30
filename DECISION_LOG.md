@@ -131,3 +131,25 @@ Each entry: D-NNN, the choice, why, and the production replacement.
 **Production**: Same model. Two additional doors:
 - **Compliance hard-delete** (GDPR Article 17): admin-only endpoint that wipes a single user's traces; protected by a multi-party-approval workflow because it crosses the audit boundary. Log the deletion itself as an "audit-erasure" event so even the act of forgetting is on the ledger.
 - **Retention policy**: time-based purge of `deleted_at` records older than N years — but again, *not* of the underlying traces, which graduate to cold archive.
+
+
+## D-016 · Postgres is the authorization source of truth; Keycloak only authenticates
+
+**Choice**: The schema includes `users` and `user_roles` tables. Keycloak still verifies the password and issues the JWT, but at login time we look up the user in Postgres and the role list on the resulting `CurrentUser` comes from `user_roles`, not from the token's `realm_access.roles`.
+
+**Why**: The brief (§4.6) lists `users or user_roles` as a required table. Two options were considered:
+- A. Keep Keycloak as the sole source of roles, add a read-only mirror table in Postgres for documentation.
+- B. Make Postgres the source of truth for roles; demote Keycloak to authentication only.
+
+B was chosen. It removes the single-source-of-truth ambiguity (with A, two systems can disagree and the answer to "which roles does Sarah have?" depends on who you ask). It also lets this app own its own role vocabulary — Keycloak realm roles and app roles no longer have to match name-for-name forever.
+
+**Implementation**:
+- DDL: `users(id, username UNIQUE, email, display_name, keycloak_subject, is_active, created_at, deleted_at)` and `user_roles(id, user_id FK, role_name CHECK IN ('sales_user','support_user','admin'), granted_at, granted_by)`.
+- Seed: three demo users (sarah.sales / sam.support / admin.acme) with one role each, matching the Keycloak realm.
+- Login (`/auth/login`, `POST /login`): Keycloak verifies the password → Postgres lookup via `get_roles_for_username` → if the user is missing or has no supported role, login is rejected even if Keycloak said yes. The resolved role list is then encoded into the signed session cookie.
+- No per-request DB hit: the session cookie carries the role snapshot, consistent with how JWT systems work. Trade-off: revoking a role takes effect on next login.
+
+**Production**:
+- Add a short-TTL Redis cache and a SIGHUP-style cookie-invalidation channel so revocations propagate within seconds.
+- Promote `granted_by` to a foreign key to `users.id` and add a `user_role_audit` table that captures grant/revoke events.
+- Replace direct grant with Authorization Code + PKCE (D-003) but keep this same role-resolution rule on the callback.

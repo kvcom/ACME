@@ -5,6 +5,31 @@ from acme_app.auth.jwt_validator import extract_roles
 from acme_app.api.routes_auth import _friendly_login_error
 
 
+@pytest.fixture
+def stub_db_roles(monkeypatch):
+    """Stand in for the Postgres role lookup so auth tests don't need a live DB.
+
+    Mirrors the seeded users in infra/postgres/seed.sql.
+    """
+    from acme_app.api import routes_auth
+
+    table = {
+        'sarah.sales': ['sales_user'],
+        'sam.support': ['support_user'],
+        'admin.acme': ['admin'],
+    }
+
+    async def fake_lookup(username):
+        return table.get(username)
+
+    async def fake_link(_username, _subject):
+        return None
+
+    monkeypatch.setattr(routes_auth, 'get_roles_for_username', fake_lookup)
+    monkeypatch.setattr(routes_auth, 'link_keycloak_subject', fake_link)
+    return table
+
+
 def test_session_roundtrip():
     user = CurrentUser(subject='abc', username='sam.support', roles=['support_user'], access_token='t')
     cookie = _encode_session(user)
@@ -79,7 +104,7 @@ def test_decode_session_without_expiry_returns_none():
 
 
 @pytest.mark.asyncio
-async def test_keycloak_rejection_does_not_fall_back_to_demo(monkeypatch):
+async def test_keycloak_rejection_does_not_fall_back_to_demo(monkeypatch, stub_db_roles):
     from acme_app.api import routes_auth
     from acme_app.auth.keycloak_client import KeycloakLoginRejected
 
@@ -95,7 +120,7 @@ async def test_keycloak_rejection_does_not_fall_back_to_demo(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_keycloak_account_not_ready_uses_demo_fallback(monkeypatch):
+async def test_keycloak_account_not_ready_uses_demo_fallback(monkeypatch, stub_db_roles):
     from acme_app.api import routes_auth
     from acme_app.auth.keycloak_client import KeycloakAccountNotReady
     from acme_app.config import settings
@@ -114,7 +139,7 @@ async def test_keycloak_account_not_ready_uses_demo_fallback(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_keycloak_unavailable_uses_demo_fallback(monkeypatch):
+async def test_keycloak_unavailable_uses_demo_fallback(monkeypatch, stub_db_roles):
     from acme_app.api import routes_auth
     from acme_app.auth.keycloak_client import KeycloakUnavailable
     from acme_app.config import settings
@@ -133,7 +158,7 @@ async def test_keycloak_unavailable_uses_demo_fallback(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_keycloak_unavailable_without_demo_fallback_denies(monkeypatch):
+async def test_keycloak_unavailable_without_demo_fallback_denies(monkeypatch, stub_db_roles):
     from acme_app.api import routes_auth
     from acme_app.auth.keycloak_client import KeycloakUnavailable
     from acme_app.config import settings

@@ -21,13 +21,18 @@ class OllamaProvider(LLMProvider):
     name = 'ollama'
 
     def __init__(self, model: str | None = None) -> None:
-        self.model = model or 'llama3.1:8b'
+        self.model = model or 'qwen3.5:9b'
         self.base_url = settings.ollama_base_url.rstrip('/')
         if not self.base_url:
             raise RuntimeError('OLLAMA_BASE_URL not set')
 
+    def _disable_thinking(self) -> bool:
+        return self.model.lower().startswith('qwen3')
+
     async def _chat(self, system: str, user: str, want_json: bool, max_tokens: int) -> tuple[str, int, int, int]:
         start = time.perf_counter()
+        if want_json:
+            system = system + '\nReturn JSON only.'
         payload: dict[str, Any] = {
             'model': self.model,
             'stream': False,
@@ -37,9 +42,11 @@ class OllamaProvider(LLMProvider):
                 {'role': 'user', 'content': user},
             ],
         }
+        if self._disable_thinking():
+            payload['think'] = False
         if want_json:
             payload['format'] = 'json'
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(f'{self.base_url}/api/chat', json=payload)
             response.raise_for_status()
             data = response.json()
@@ -52,7 +59,7 @@ class OllamaProvider(LLMProvider):
             system=PLANNER_SYSTEM_PROMPT + '\n' + system_prompt,
             user=user_prompt,
             want_json=True,
-            max_tokens=1024,
+            max_tokens=2048,
         )
         try:
             parsed = json.loads(text)

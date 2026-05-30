@@ -1,5 +1,32 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- Identity tables. Keycloak still issues the JWT (authentication), but
+-- Postgres is the source of truth for *which roles a user has*
+-- (authorization). See DECISION_LOG D-016. The username column matches the
+-- Keycloak `preferred_username` claim.
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username TEXT NOT NULL UNIQUE,
+    email TEXT,
+    display_name TEXT,
+    keycloak_subject TEXT UNIQUE,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS user_roles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role_name TEXT NOT NULL,
+    granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    granted_by TEXT,
+    CONSTRAINT unique_user_role UNIQUE (user_id, role_name),
+    CONSTRAINT role_name_supported CHECK (role_name IN ('sales_user','support_user','admin'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_roles_user ON user_roles(user_id);
+
 CREATE TABLE IF NOT EXISTS customers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,

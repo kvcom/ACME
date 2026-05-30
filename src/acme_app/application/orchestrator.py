@@ -46,10 +46,8 @@ from acme_app.infrastructure.db import repositories as repo
 from acme_app.infrastructure.llm.model_registry import MODEL_REGISTRY
 from acme_app.infrastructure.llm.provider import get_provider
 from acme_app.infrastructure.llm.providers.auto_provider import (
-    ROUTE_DESCRIPTIONS,
     ROUTE_CHAINS,
     RouteDecision,
-    _deterministic_route,
 )
 from acme_app.infrastructure.mcp_client.client import MCPClient, MCPClientError
 from acme_app.infrastructure.mcp_client.schemas import WRITE_TOOLS
@@ -252,50 +250,6 @@ def _valid_route(route: str) -> str:
     return route if route in ROUTE_CHAINS else 'clarification'
 
 
-def _deterministic_route_for_current_message(user_query: str) -> RouteDecision:
-    """Classify the current user message without letting old transcript text dominate."""
-    text = (user_query or '').strip().lower()
-    if any(text == customer.lower() for customer in _KNOWN_CUSTOMERS):
-        return RouteDecision('customer_read', 1.0, 'rule: exact known customer selection', 'rules')
-    return _deterministic_route(user_query)
-
-
-async def _classify_with_selected_model(
-    provider_name: str,
-    user_prompt: str,
-    context: dict[str, Any],
-) -> RouteDecision:
-    provider = get_provider(provider_name)
-    system = (
-        'You are classifying a user request for an enterprise support assistant. '
-        'Return JSON only. Choose exactly one route from the allowed routes. '
-        'Do not answer the user.'
-    )
-    user = (
-        'Allowed routes and meanings:\n'
-        f'{json.dumps(ROUTE_DESCRIPTIONS, indent=2)}\n\n'
-        f'Context JSON:\n{json.dumps(context, default=str)[:2000]}\n\n'
-        f'User request:\n{user_prompt[:4000]}\n\n'
-        'Return exactly: {"route": "...", "confidence": 0.0, "reason": "..."}'
-    )
-    response = await provider.narrate(system, user, {'routes': list(ROUTE_CHAINS)})
-    payload = _parse_json_object(response.text)
-    route = _valid_route(str(payload.get('route') or 'clarification'))
-    confidence = float(payload.get('confidence') or 0.0)
-    reason = str(payload.get('reason') or '')
-    return RouteDecision(route, max(0.0, min(confidence, 1.0)), reason, f'model:{provider_name}')
-
-
-def _material_route_conflict(rules: RouteDecision, model: RouteDecision) -> bool:
-    """Only pause for meaningful route disagreements or low model certainty."""
-    if model.confidence and model.confidence < 0.55:
-        return True
-    if rules.route == model.route:
-        return False
-    low_material = {'summary', 'customer_read', 'issue_read'}
-    return not ({rules.route, model.route} <= low_material)
-
-
 def _resolution_payload(rules: RouteDecision, model: RouteDecision) -> ResolutionRequiredDTO:
     rules_option = ResolutionOptionDTO(
         key='rules',
@@ -468,51 +422,6 @@ async def run_agent(
                     )
                     ledger.event('agent_plan', 'classification.human_resolved',
                                  {'route': route_decision.route})
-                else:
-                    rules_decision = _deterministic_route_for_current_message(query)
-                    model_decision = await _classify_with_selected_model(
-                        provider_name,
-                        query,
-                        {**plan_context, 'recent_context': history_text[:1200] if history_text else None},
-                    )
-                    if _material_route_conflict(rules_decision, model_decision):
-                        ledger.event(
-                            'agent_plan',
-                            'classification.conflict',
-                            {
-                                'rules_route': rules_decision.route,
-                                'rules_reason': rules_decision.reason,
-                                'model_route': model_decision.route,
-                                'model_reason': model_decision.reason,
-                                'model_confidence': model_decision.confidence,
-                            },
-                            status='needs_review',
-                        )
-                        await _emit(event_sink, 'plan', {
-                            'intent': 'classification_conflict',
-                            'steps_count': 0,
-                            'narration_kind': 'resolution_required',
-                        })
-                        return await _handle_resolution_required(
-                            session=session,
-                            ledger=ledger,
-                            username=username,
-                            conversation_ref=conversation_ref,
-                            query=query,
-                            query_redacted=query_redacted,
-                            provider_name=provider_name,
-                            started_ms=started_ms,
-                            event_sink=event_sink,
-                            rules_decision=rules_decision,
-                            model_decision=model_decision,
-                        )
-                    source = 'rules+model' if rules_decision.route == model_decision.route else 'rules-preferred'
-                    route_decision = RouteDecision(
-                        route=rules_decision.route,
-                        confidence=max(rules_decision.confidence, model_decision.confidence),
-                        reason=f'rules={rules_decision.reason}; model={model_decision.reason}',
-                        source=source,
-                    )
                 plan, llm_plan_response = await create_plan(
                     enriched_query, provider_name,
                     context=plan_context,
@@ -747,12 +656,14 @@ async def run_agent(
             narration_response.prompt_tokens,
             narration_response.completion_tokens,
         )
+        evidence_list = sorted(set(cumulative_evidence))[:20]
         ledger.event('final_response', 'narration.complete',
                      {'model': narration_response.model, 'len': len(narration_response.text),
                       'prompt_tokens': narration_response.prompt_tokens,
                       'completion_tokens': narration_response.completion_tokens,
                       'total_tokens': narration_response.prompt_tokens + narration_response.completion_tokens,
-                      'cost_usd': narration_event_cost},
+                      'cost_usd': narration_event_cost,
+                      'evidence': evidence_list},
                      latency_ms=narration_response.latency_ms)
 
         if plan.requires_clarification and plan.clarification_question:
@@ -851,7 +762,7 @@ async def run_agent(
             intent=plan.intent,
             answer=answer,
             badge=badge,
-            evidence=sorted(set(cumulative_evidence))[:20],
+            evidence=evidence_list,
             proposed_action=proposed_dto,
             tools_called=tools_called,
             skills_invoked=skills_invoked,
@@ -1109,6 +1020,13 @@ async def _confirm_pending(
     prompt_tokens = llm_plan_response.prompt_tokens
     completion_tokens = llm_plan_response.completion_tokens
     cost = compute_cost(provider_name, prompt_tokens, completion_tokens)
+    ledger.event('final_response', 'action.confirmation_response',
+                 {'len': len(answer),
+                  'evidence': list(pending.get('evidence', [])),
+                  'action_type': pending.get('action_type'),
+                  'issue_ref': pending.get('issue_ref'),
+                  'created': bool(result.get('created')) if 'result' in locals() else False,
+                  'duplicate': bool(result.get('duplicate')) if 'result' in locals() else False})
     await repo.conversation_upsert(session, conversation_ref, username, query[:200])
     await ledger_mod.persist(
         ledger=ledger, session=session,
@@ -1201,7 +1119,8 @@ async def _handle_preplan_ambiguity(
                   'prompt_tokens': prompt_tokens,
                   'completion_tokens': completion_tokens,
                   'total_tokens': prompt_tokens + completion_tokens,
-                  'cost_usd': cost},
+                  'cost_usd': cost,
+                  'evidence': []},
                  latency_ms=llm_latency)
 
     await repo.conversation_upsert(session, conversation_ref, username, query[:200])
@@ -1277,6 +1196,8 @@ async def _handle_resolution_required(
     latency_ms = int(time.time() * 1000) - started_ms
 
     await _emit(event_sink, 'contradiction_required', resolution.model_dump(mode='json'))
+    ledger.event('final_response', 'resolution.required',
+                 {'len': len(answer), 'evidence': [], 'status': badge})
 
     await repo.conversation_upsert(session, conversation_ref, username, query[:200])
     await ledger_mod.persist(
@@ -1361,6 +1282,13 @@ async def _finalise_blocked(
     model = llm_response.model if llm_response else ''
     llm_latency = llm_response.latency_ms if llm_response else 0
     cost = compute_cost(provider_name, prompt_tokens, completion_tokens)
+    ledger.event('final_response', 'blocked.response',
+                 {'len': len(answer), 'evidence': [], 'status': badge,
+                  'prompt_tokens': prompt_tokens,
+                  'completion_tokens': completion_tokens,
+                  'total_tokens': prompt_tokens + completion_tokens,
+                  'cost_usd': cost},
+                 latency_ms=llm_latency)
     await repo.conversation_upsert(session, conversation_ref, ledger.username, query[:200])
     await ledger_mod.persist(
         ledger=ledger, session=session, conversation_ref=conversation_ref,

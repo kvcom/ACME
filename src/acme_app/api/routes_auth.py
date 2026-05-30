@@ -17,6 +17,7 @@ from acme_app.auth.keycloak_client import (
     KeycloakUnavailable,
     login as keycloak_login,
 )
+from acme_app.auth.role_store import get_roles_for_username, link_keycloak_subject
 from acme_app.config import settings
 
 
@@ -106,27 +107,81 @@ async def logout() -> RedirectResponse:
 
 
 async def _resolve_login(username: str, password: str) -> tuple[CurrentUser | None, str | None]:
-    """Try Keycloak first; if it's unreachable or rejects, fall back to the demo table."""
+    """Authenticate via Keycloak; authorize via Postgres `user_roles`.
+
+    See DECISION_LOG D-016. Keycloak verifies the password; Postgres is the
+    source of truth for which roles the user has. If the user has no row in
+    `users` (or no supported roles), login is rejected even when Keycloak
+    accepted the password — this app is the gatekeeper for *its* roles.
+    """
+    db_roles = await _safe_load_db_roles(username)
+
+    access_token = ''
+    auth_source = 'keycloak'
+    subject = f'demo-{username}'
+    keycloak_accepted = False
     try:
         token_payload = await keycloak_login(username, password)
         access_token = token_payload.get('access_token', '')
         if access_token:
             try:
-                return user_from_token(access_token), None
+                kc_user = user_from_token(access_token)
+                subject = kc_user.subject
+                keycloak_accepted = True
             except HTTPException as exc:
-                return None, exc.detail
+                # JWT decoded but had no supported role at the Keycloak side.
+                # We override with DB roles below if available.
+                subject = exc.detail if isinstance(exc.detail, str) else subject
+                keycloak_accepted = True
     except KeycloakLoginRejected as exc:
         return None, str(exc)
     except KeycloakAccountNotReady:
         pass
     except KeycloakUnavailable:
         pass
-    if not settings.demo_auth_fallback_enabled:
-        return None, 'Keycloak unavailable and demo auth fallback is disabled'
-    demo = DEMO_USERS.get(username)
-    if demo and demo['password'] == password:
-        return CurrentUser(
-            subject=f'demo-{username}', username=username,
-            roles=list(demo['roles']), access_token='', auth_source='demo_fallback',
-        ), None
-    return None, 'Invalid credentials'
+
+    if not keycloak_accepted:
+        # Keycloak couldn't confirm the password. Fall back to the demo table
+        # if and only if that's enabled — and still require a Postgres user row.
+        if not settings.demo_auth_fallback_enabled:
+            return None, 'Keycloak unavailable and demo auth fallback is disabled'
+        demo = DEMO_USERS.get(username)
+        if not demo or demo['password'] != password:
+            return None, 'Invalid credentials'
+        auth_source = 'demo_fallback'
+
+    # Postgres is authoritative for role assignment.
+    if db_roles is None:
+        return None, 'Account is not provisioned in this application'
+    if not db_roles:
+        return None, 'No supported role assigned in Postgres'
+
+    # First-login provisioning: stamp the Keycloak `sub` onto `users.keycloak_subject`
+    # so the two stores share a stable link. Best-effort — a DB hiccup must not
+    # fail a login that already passed authn + authz.
+    if keycloak_accepted and not subject.startswith('demo-'):
+        try:
+            await link_keycloak_subject(username, subject)
+        except Exception:
+            pass
+
+    return CurrentUser(
+        subject=subject,
+        username=username,
+        roles=db_roles,
+        access_token=access_token,
+        auth_source=auth_source,
+    ), None
+
+
+async def _safe_load_db_roles(username: str) -> list[str] | None:
+    """Wrap the role lookup so a DB outage doesn't take auth down completely.
+
+    Returns the role list (possibly empty) when the user is found, None when
+    the user is missing, and re-raises only on programming errors. On a
+    transport error we treat the user as not-found to fail closed.
+    """
+    try:
+        return await get_roles_for_username(username)
+    except Exception:
+        return None
