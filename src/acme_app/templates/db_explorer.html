@@ -145,26 +145,42 @@
     .loading { color: var(--text-muted); font-size: 11px; padding: 6px 12px; }
     .err { color: var(--color-denied-dim); padding: 6px 12px; }
 
-    /* Realtime feedback */
+    /* ── Realtime "LIVE" pill with blinking LED ──────────────────────────
+       Text on the left, small round LED on the right that pulses green
+       while connected, glows dim red when offline, slow-blinks while
+       connecting. Width is steady across all three states so the
+       header layout doesn't shift on reconnects. */
     .live-pill {
       display: inline-flex; align-items: center; gap: 6px;
-      font-family: var(--font-ui); font-size: 10px;
-      letter-spacing: 0.08em; text-transform: uppercase;
+      font-family: var(--font-ui); font-size: 10px; font-weight: 600;
+      letter-spacing: 0.12em; text-transform: uppercase;
       color: var(--text-muted); margin-left: auto; padding-right: 6px;
+      transition: color 200ms;
     }
-    .live-dot {
+    .live-pill .led {
       width: 8px; height: 8px; border-radius: 50%;
-      background: var(--color-denied-dim);
+      background: var(--text-dim);
       box-shadow: 0 0 0 0 rgba(0,0,0,0);
     }
-    .live-pill.is-live .live-dot {
-      background: var(--color-grounded-dim);
-      animation: livepulse 2s infinite;
+    .live-pill.is-live { color: var(--color-grounded-dim); }
+    .live-pill.is-live .led {
+      background: #4ade80;       /* bright LED green */
+      box-shadow: 0 0 6px 1px rgba(74, 222, 128, 0.8);
+      animation: led-blink 1.4s ease-in-out infinite;
     }
-    @keyframes livepulse {
-      0%   { box-shadow: 0 0 0 0 rgba(120, 192, 132, 0.45); }
-      70%  { box-shadow: 0 0 0 7px rgba(120, 192, 132, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(120, 192, 132, 0); }
+    .live-pill.is-offline { color: var(--color-denied-dim); }
+    .live-pill.is-offline .led {
+      background: var(--color-denied-dim);
+      box-shadow: 0 0 4px 0 rgba(217, 95, 95, 0.55);
+    }
+    /* Connecting (neither live nor offline) — slow soft blink in muted tone. */
+    .live-pill:not(.is-live):not(.is-offline) .led {
+      animation: led-blink 2.2s ease-in-out infinite;
+      opacity: 0.6;
+    }
+    @keyframes led-blink {
+      0%, 100% { opacity: 1;    box-shadow: 0 0 6px 1px rgba(74, 222, 128, 0.85); }
+      50%      { opacity: 0.35; box-shadow: 0 0 2px 0 rgba(74, 222, 128, 0.2); }
     }
     @keyframes rowflash {
       0%   { background: rgba(217,119,87,0.28); }
@@ -209,7 +225,8 @@
         <h1 id="root-title">Pick a table to start</h1>
         <span class="hint" id="root-hint">Click any <b>+</b> next to a value to drill into its related rows.</span>
         <span class="live-pill" id="live-pill" title="WebSocket connection status">
-          <span class="live-dot"></span><span id="live-text">offline</span>
+          <span class="label" id="live-text">offline</span>
+          <span class="led"></span>
         </span>
       </div>
       <div class="grid-wrap">
@@ -462,6 +479,7 @@
   function setLive(state, text) {
     const pill = document.getElementById('live-pill');
     pill.classList.toggle('is-live', state === 'live');
+    pill.classList.toggle('is-offline', state === 'offline');
     document.getElementById('live-text').textContent = text;
   }
 
