@@ -289,6 +289,43 @@ def _customer_clarification_options(matches: list[dict[str, Any]]) -> list[Clari
     return options
 
 
+def _clarification_followup_query(query: str, recent_turns: list[dict[str, Any]]) -> str | None:
+    """Expand a customer-choice click into the original unresolved request.
+
+    Small local models often treat a clarification answer like "Acme
+    Manufacturing Group" as the whole request. This helper preserves the
+    user's choice while making the intended prior question explicit.
+    """
+    choice = query.strip()
+    if not choice or '?' in choice or len(choice.split()) > 6:
+        return None
+
+    previous_user: str | None = None
+    saw_customer_clarification = False
+    for turn in reversed(recent_turns[-6:]):
+        text = (turn.get('text') or '').strip()
+        if not text:
+            continue
+        if turn.get('role') == 'assistant' and (
+            'which one did you mean' in text.lower()
+            or 'multiple customers match' in text.lower()
+            or 'found 2 customers in scope' in text.lower()
+        ):
+            saw_customer_clarification = True
+            continue
+        if saw_customer_clarification and turn.get('role') == 'user':
+            previous_user = text
+            break
+
+    if not previous_user:
+        return None
+
+    return (
+        f'The user selected customer "{choice}" to answer their previous request: '
+        f'"{previous_user}". Use "{choice}" as the customer_name for the plan.'
+    )
+
+
 async def _emit(sink: EventSink, name: str, payload: dict[str, Any]) -> None:
     if sink is None:
         return
@@ -372,7 +409,8 @@ async def run_agent(
                 f'There is a pending proposed action awaiting user confirmation: '
                 f'{pending.get("action_type")} on {pending.get("issue_ref")}.\n'
             )
-        enriched_query = (history_text + '\nCurrent message:\n' + query) if history_text else query
+        effective_query = _clarification_followup_query(query, recent_turns) or query
+        enriched_query = (history_text + '\nCurrent message:\n' + effective_query) if history_text else effective_query
 
         plan_context = {
             'role': role,
@@ -690,6 +728,14 @@ async def run_agent(
             has_evidence = bool(cumulative_evidence) or bool(facts.get('skill_output'))
             badge = badge_for(has_evidence=has_evidence)
 
+        if not plan.requires_clarification and _needs_customer_status_fallback(answer, facts):
+            answer = _render_customer_status_answer(facts, role)
+            ledger.event(
+                'final_response',
+                'narration.quality_fallback',
+                {'reason': 'missing_customer_status_details', 'len': len(answer)},
+            )
+
         plan_model = llm_plan_response.model or ''
         narration_model = narration_response.model or plan_model
         plan_model_key = _model_key_for_cost(plan_model, provider_name)
@@ -879,6 +925,111 @@ def _invoke_skill(
             open_actions=[],
         )
     return {}
+
+
+def _needs_customer_status_fallback(answer: str | None, facts: dict[str, Any]) -> bool:
+    """Detect under-answered customer status narrations.
+
+    Local models can occasionally produce a grammatical but incomplete answer
+    even when the tool facts are rich. When issues or risk output are present,
+    the user-facing answer must at least name the issue refs and include a
+    recommendation/risk signal.
+    """
+    issues = facts.get('open_issues') or []
+    skill_output = facts.get('skill_output') or {}
+    if not issues and not skill_output:
+        return False
+
+    text = (answer or '').strip()
+    if len(text) < 120:
+        return True
+
+    lower = text.lower()
+    issue_refs = [str(i.get('issue_ref')) for i in issues if i.get('issue_ref')]
+    if issue_refs and any(ref.lower() not in lower for ref in issue_refs):
+        return True
+
+    if issues and not any(word in lower for word in ('status', 'sla', 'severity', 'risk')):
+        return True
+
+    if skill_output.get('recommended_next_action') and not any(
+        word in lower for word in ('recommend', 'next step', 'follow up', 'prepare', 'escalate', 'assign')
+    ):
+        return True
+
+    return False
+
+
+def _render_customer_status_answer(facts: dict[str, Any], role: str) -> str:
+    customer = facts.get('customer_profile') or {}
+    issues = facts.get('open_issues') or []
+    skill_output = facts.get('skill_output') or {}
+    recommendation = facts.get('recommendation') or skill_output.get('recommended_next_action') or {}
+
+    name = customer.get('name') or 'Customer'
+    tier = customer.get('tier')
+    region = customer.get('region')
+    risk = skill_output.get('risk_level')
+
+    lines: list[str] = [f'### Status Update for {name}', '']
+    profile_bits = [bit for bit in (tier, region) if bit]
+    if profile_bits:
+        lines.append(f'- {" · ".join(profile_bits)}')
+    if risk:
+        lines.append(f'- Risk level: **{risk}**')
+
+    lines.extend(['', '### Open Issues', ''])
+    if issues:
+        for issue in issues:
+            ref = issue.get('issue_ref') or 'Issue'
+            title = issue.get('title') or 'Untitled issue'
+            details = [
+                issue.get('severity'),
+                issue.get('status'),
+                issue.get('sla_status') or issue.get('sla'),
+            ]
+            owner = issue.get('owner')
+            detail_text = ', '.join(str(d) for d in details if d)
+            if owner:
+                detail_text = f'{detail_text}, Owner: {owner}' if detail_text else f'Owner: {owner}'
+            suffix = f' ({detail_text})' if detail_text else ''
+            lines.append(f'- **{ref}**: {title}{suffix}')
+    else:
+        lines.append('- No open issues were found in the retrieved facts.')
+
+    lines.extend(['', '### Latest Status', ''])
+    executive_summary = skill_output.get('executive_summary')
+    if executive_summary:
+        lines.append(f'- {executive_summary}')
+    risk_factors = skill_output.get('risk_factors') or []
+    for factor in risk_factors:
+        lines.append(f'- {factor}')
+
+    lines.extend(['', '### Recommended Next Step', ''])
+    if recommendation:
+        action_type = str(recommendation.get('action_type') or 'FOLLOW_UP')
+        priority = recommendation.get('priority') or 'Medium'
+        action_label = action_type.replace('_', ' ').title()
+        rationale = recommendation.get('rationale')
+        if action_type == 'PREPARE_RECOVERY_PLAN' and role == 'sales_user':
+            lines.append(
+                f'- Ask Support to prepare a recovery plan for the highest-priority open issue '
+                f'({priority} priority).'
+            )
+        else:
+            lines.append(f'- Recommend: {action_label} ({priority} priority).')
+        if rationale:
+            lines.append(f'- Rationale: {rationale}')
+    else:
+        lines.append('- No specific recommendation was returned in the retrieved facts.')
+
+    missing = skill_output.get('missing_information') or []
+    if missing:
+        lines.extend(['', '### Confirm On The Call', ''])
+        for item in missing:
+            lines.append(f'- {item}')
+
+    return '\n'.join(lines).strip()
 
 
 async def _maybe_propose(

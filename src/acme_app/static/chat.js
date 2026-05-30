@@ -166,6 +166,16 @@
     return wrap;
   }
 
+  function highlightResponse(traceRef, active, scroll = false) {
+    if (!traceRef) return;
+    const turn = threadEl.querySelector(`.msg-bot[data-trace-ref="${CSS.escape(traceRef)}"]`);
+    if (!turn) return;
+    turn.classList.toggle('evidence-hover', Boolean(active));
+    if (active && scroll) {
+      turn.scrollIntoView({block: 'center', behavior: 'smooth'});
+    }
+  }
+
   // Pulsing dots under the plan card while the LLM is composing the answer.
   function ensureComposing(planEl) {
     if (planEl.querySelector('.composing')) return;
@@ -316,29 +326,13 @@
     }
   })();
 
-  (function restoreLatestEvidence() {
-    if (document.body.dataset.pendingAction) return;
-    const raw = document.body.dataset.latestEvidence;
-    if (!raw) return;
-    try {
-      const evidence = JSON.parse(raw);
-      if (evidence && evidence.length) {
-        setEvidence(evidence, {
-          label: 'Latest response',
-          traceRef: document.body.dataset.latestEvidenceTraceRef || '',
-        });
-      }
-    } catch (e) {
-      console.warn('[acme] failed to parse latest evidence', e);
-    }
-  })();
-
   document.querySelectorAll('[data-show-evidence]').forEach(btn => {
     btn.addEventListener('click', () => {
       try {
-        setEvidence(JSON.parse(btn.dataset.showEvidence || '[]'), {
-          label: 'Selected response',
+        addEvidenceGroup(JSON.parse(btn.dataset.showEvidence || '[]'), {
+          label: 'Response',
           traceRef: btn.dataset.traceRef || '',
+          focus: true,
         });
       } catch (e) {
         console.warn('[acme] failed to parse history evidence', e);
@@ -380,7 +374,16 @@
   }
 
   // ── Right-rail panels ─────────────────────────────────────────────────
-  function clearRail() { railEl.innerHTML = ''; }
+  let evidenceGroupCounter = 0;
+
+  function clearRail(options = {}) {
+    if (!options.keepEvidence) {
+      railEl.innerHTML = '';
+      evidenceGroupCounter = 0;
+      return;
+    }
+    railEl.querySelectorAll('[data-role="action-card"], [data-role="role-reference"]').forEach(el => el.remove());
+  }
 
   function evidenceParts(item) {
     const raw = String(item || '');
@@ -397,47 +400,89 @@
   function ensureEvidencePanel() {
     let panel = railEl.querySelector('[data-role="evidence-panel"]');
     if (!panel) {
-      railEl.insertAdjacentHTML('beforeend', `
+      railEl.insertAdjacentHTML('afterbegin', `
         <div class="panel" data-role="evidence-panel">
           <div class="panel-header">
             <span class="label">Evidence</span>
-            <span class="mono dim" style="font-size:10px;" data-role="ev-count">0 records · live</span>
+            <span class="mono dim" style="font-size:10px;" data-role="ev-count">0 records</span>
           </div>
-          <div class="panel-body panel-divider" style="padding: 8px 12px; display:none;" data-role="ev-context"></div>
-          <div class="panel-body" style="padding: 6px;" data-role="ev-list"></div>
+          <div class="panel-body" style="padding: 6px; display:grid; gap:8px;" data-role="ev-list"></div>
         </div>`);
       panel = railEl.querySelector('[data-role="evidence-panel"]');
     }
     return panel;
   }
 
-  function setEvidence(items, meta = {}) {
+  function updateEvidenceCount(panel) {
+    const groups = [...panel.querySelectorAll('[data-role="ev-group"]')];
+    const total = groups.reduce((sum, group) => sum + Number(group.dataset.count || 0), 0);
+    panel.querySelector('[data-role="ev-count"]').textContent =
+      `${total} record${total === 1 ? '' : 's'} · ${groups.length} response${groups.length === 1 ? '' : 's'}`;
+  }
+
+  function addEvidenceGroup(items, meta = {}) {
     if (!items || !items.length) return;
     const panel = ensureEvidencePanel();
     const list = panel.querySelector('[data-role="ev-list"]');
-    const context = panel.querySelector('[data-role="ev-context"]');
-    list.innerHTML = '';
+    const key = meta.traceRef || `local-${++evidenceGroupCounter}`;
+    let group = list.querySelector(`[data-role="ev-group"][data-key="${CSS.escape(key)}"]`);
+    if (!group) {
+      group = document.createElement('div');
+      group.dataset.role = 'ev-group';
+      group.dataset.key = key;
+      group.tabIndex = 0;
+      group.style.cssText = 'border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:8px 8px 6px;background:rgba(255,255,255,0.015);';
+      list.appendChild(group);
+    }
+    group.dataset.traceRef = meta.traceRef || '';
+    if (meta.traceRef && group.dataset.highlightBound !== '1') {
+      group.dataset.highlightBound = '1';
+      group.addEventListener('mouseenter', () => highlightResponse(group.dataset.traceRef, true, true));
+      group.addEventListener('mouseleave', () => highlightResponse(group.dataset.traceRef, false));
+      group.addEventListener('focus', () => highlightResponse(group.dataset.traceRef, true, true));
+      group.addEventListener('blur', () => highlightResponse(group.dataset.traceRef, false));
+    }
+    group.dataset.count = String(items.length);
+    const trace = meta.traceRef
+      ? `<a href="/traces/${encodeURIComponent(meta.traceRef)}">${escape(meta.traceRef)}</a>`
+      : '<span class="dim">unsaved</span>';
+    group.innerHTML = `
+      <div class="trace-meta" style="margin:0 0 6px;">
+        <span>${escape(meta.label || 'Response')}</span>
+        <span class="sep">·</span>${trace}
+      </div>
+      <div data-role="ev-items"></div>`;
+    const itemList = group.querySelector('[data-role="ev-items"]');
     items.slice(0, 20).forEach(item => {
       const {kind, id} = evidenceParts(item);
       const li = document.createElement('div');
       li.className = 'ev-item';
       li.innerHTML = `<span class="ref">${escape(id.slice(0, 14))}</span><span class="desc">${escape(kind)}</span>`;
-      list.appendChild(li);
+      itemList.appendChild(li);
     });
-    panel.querySelector('[data-role="ev-count"]').textContent = `${items.length} record${items.length === 1 ? '' : 's'}`;
-    if (context) {
-      const bits = [];
-      if (meta.label) bits.push(escape(meta.label));
-      if (meta.traceRef) bits.push(`<a href="/traces/${encodeURIComponent(meta.traceRef)}">${escape(meta.traceRef)}</a>`);
-      context.style.display = bits.length ? '' : 'none';
-      context.innerHTML = bits.length
-        ? `<div class="trace-meta" style="margin-top:0;">${bits.join('<span class="sep">·</span>')}</div>`
-        : '';
+    updateEvidenceCount(panel);
+    if (meta.focus) {
+      group.scrollIntoView({block: 'nearest'});
+      group.style.borderColor = 'var(--accent-border)';
+      setTimeout(() => { group.style.borderColor = 'var(--border-subtle)'; }, 900);
     }
   }
 
+  (function restoreConversationEvidence() {
+    document.querySelectorAll('[data-show-evidence]').forEach((btn, index) => {
+      try {
+        addEvidenceGroup(JSON.parse(btn.dataset.showEvidence || '[]'), {
+          label: `Response ${index + 1}`,
+          traceRef: btn.dataset.traceRef || '',
+        });
+      } catch (e) {
+        console.warn('[acme] failed to parse conversation evidence', e);
+      }
+    });
+  })();
+
   function renderProposedActionCard(pa) {
-    clearRail();
+    clearRail({keepEvidence: true});
     const dueText = pa.due_at ? new Date(pa.due_at).toLocaleString() : '—';
     railEl.insertAdjacentHTML('beforeend', `
       <div class="action-card" data-role="action-card">
@@ -491,7 +536,7 @@
   }
 
   function renderRoleReference(role) {
-    clearRail();
+    clearRail({keepEvidence: true});
     const matrix = {
       sales_user: [['read customers · issues · updates', true], ['request recommendations', true],
                    ['create next actions', false], ['update issue status', false]],
@@ -501,7 +546,7 @@
               ['reveal redacted query in trace', true]],
     }[role] || [];
     railEl.insertAdjacentHTML('beforeend', `
-      <div class="panel">
+      <div class="panel" data-role="role-reference">
         <div class="panel-header">
           <span class="label">Your role</span>
           <span class="mono dim" style="font-size:10px;">${escape(role)}</span>
@@ -720,6 +765,8 @@
         <span class="sep">·</span>${sec}s
         <span class="sep">·</span>${escape(modelText)}
       </div>`);
+    const turn = answerRegion.closest('.msg-bot');
+    if (turn && r.trace_ref) turn.dataset.traceRef = r.trace_ref;
   }
 
   // ── Send ───────────────────────────────────────────────────────────────
@@ -735,7 +782,7 @@
     }
     if (!queryOverride) queryEl.value = '';
     sendBtn.disabled = true;
-    clearRail();
+    clearRail({keepEvidence: true});
 
     const turn = startBotTurn();
     const planEl = turn.querySelector('[data-role="plan"]');
@@ -827,10 +874,11 @@
       renderTraceMeta(answerRegion, r);
       followThread();
 
+      if (evidenceAccum.length && r.badge !== 'Permission Denied' && r.badge !== 'Adversarial Input Blocked') {
+        addEvidenceGroup(evidenceAccum, {label: 'Latest response', traceRef: r.trace_ref, focus: true});
+      }
       if (r.proposed_action) {
         renderProposedActionCard(r.proposed_action);
-      } else if (evidenceAccum.length && r.badge !== 'Permission Denied' && r.badge !== 'Adversarial Input Blocked') {
-        setEvidence(evidenceAccum, {label: 'Latest response', traceRef: r.trace_ref});
       }
 
       sendBtn.disabled = false;
@@ -870,7 +918,7 @@
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({conversation_ref: convRef()}),
     });
-    clearRail();
+    clearRail({keepEvidence: true});
   }
 
   // ── New conversation ─────────────────────────────────────────────────

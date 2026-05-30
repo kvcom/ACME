@@ -46,6 +46,10 @@ Default behaviour — prefer ACTION over clarification:
   - If the user asks an open question about a customer (e.g. "What's on with
     Northwind?", "Brief me on Contoso", "Status of Skyline"), default to:
         [get_customer_profile, get_open_issues, skill:customer_escalation_summary]
+  - customer_escalation_summary is a dependent skill, not a data lookup. Never
+    call it as the only step for a customer-status question. It must be
+    preceded in the same plan by get_customer_profile and get_open_issues for
+    the same customer_name.
   - Only set requires_clarification=true when the customer name is genuinely
     ambiguous across multiple known customers (e.g. bare "Acme" matches both
     "Acme Logistics Europe" and "Acme Manufacturing Group") — in that case

@@ -69,22 +69,13 @@ async def chat_page(
     active_ref = conversation_ref
 
     history: list = []
-    latest_evidence: list[str] = []
-    latest_evidence_trace_ref = ''
     if conversation_ref:
         try:
             history = await repo.get_conversation_history(session, conversation_ref)
             for turn in history:
                 turn['badge_class'] = badge_class_for(turn.get('badge'))
-            for turn in reversed(history):
-                if turn.get('evidence'):
-                    latest_evidence = turn['evidence']
-                    latest_evidence_trace_ref = turn.get('trace_ref') or ''
-                    break
         except Exception:
             history = []
-            latest_evidence = []
-            latest_evidence_trace_ref = ''
 
     # Restore a stale-pending proposed action from PostgreSQL if Redis has
     # expired since the user last saw the Confirm card. We re-mint a fresh
@@ -129,8 +120,6 @@ async def chat_page(
             'conversation_groups': groups,
             'history': history,
             'pending_action': pending_action,
-            'latest_evidence': latest_evidence,
-            'latest_evidence_trace_ref': latest_evidence_trace_ref,
         },
     )
 

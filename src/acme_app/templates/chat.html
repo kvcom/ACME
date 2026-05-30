@@ -210,8 +210,6 @@
 <body data-conversation-ref="{{ conversation_ref }}"
       data-role="{{ user.primary_role }}"
       data-model-key="{{ default_model_key }}"
-      {% if latest_evidence %}data-latest-evidence='{{ latest_evidence | tojson | forceescape }}'{% endif %}
-      {% if latest_evidence_trace_ref %}data-latest-evidence-trace-ref="{{ latest_evidence_trace_ref }}"{% endif %}
       {% if pending_action %}data-pending-action='{{ pending_action | tojson | forceescape }}'{% endif %}>
 <div class="app-slim">
 
@@ -284,7 +282,7 @@
       <div class="msg msg-user">
         <div class="msg-body-user">{{ turn.user_query }}</div>
       </div>
-      <div class="msg msg-bot">
+      <div class="msg msg-bot" data-trace-ref="{{ turn.trace_ref }}">
         <div class="msg-body-bot">
           {% if turn.plan_steps %}
           <div class="plan-quiet">

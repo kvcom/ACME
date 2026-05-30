@@ -94,15 +94,25 @@ async def create_plan(query: str, provider_name: str, context: dict[str, Any]) -
 
     cleaned: list[Any] = []
     seen_steps: set[tuple[str, str, str]] = set()
+    customer_profile_names: set[str] = set()
+    open_issue_names: set[str] = set()
     for step in plan.steps:
         ok_step, _ = validate_step(step.step_type, step.name)
         ok_args, _ = validate_step_arguments(step.name, step.arguments)
         if ok_step and ok_args:
+            customer_name = str(step.arguments.get('customer_name') or '').strip().lower()
+            if step.name == 'customer_escalation_summary':
+                if not customer_name or customer_name not in customer_profile_names or customer_name not in open_issue_names:
+                    continue
             step_key = (step.step_type, step.name, json.dumps(step.arguments, sort_keys=True))
             if step_key in seen_steps:
                 continue
             seen_steps.add(step_key)
             cleaned.append(step)
+            if step.name == 'get_customer_profile' and customer_name:
+                customer_profile_names.add(customer_name)
+            elif step.name == 'get_open_issues' and customer_name:
+                open_issue_names.add(customer_name)
     plan.steps = cleaned
     if plan.intent in {'', 'unknown', 'null', 'none'}:
         plan.intent = _fallback_intent(query, plan.steps, plan.write_requested)

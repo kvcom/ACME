@@ -479,6 +479,43 @@ async def test_create_plan_dedupes_repeated_valid_steps(monkeypatch):
     assert names == ['get_open_issues']
 
 
+@pytest.mark.asyncio
+async def test_create_plan_drops_customer_summary_skill_without_dependencies(monkeypatch):
+    from acme_app.infrastructure.llm.providers.base import LLMResponse
+
+    class _Provider:
+        async def plan(self, *_a, **_kw):
+            return LLMResponse(
+                text='{"intent":"status","steps":[]}',
+                prompt_tokens=10,
+                completion_tokens=2,
+                latency_ms=1,
+                model='local',
+                raw={
+                    'intent': 'status',
+                    'steps': [
+                        {
+                            'step_type': 'skill',
+                            'name': 'customer_escalation_summary',
+                            'arguments': {'customer_name': 'Acme Manufacturing Group'},
+                            'rationale': 'summarise customer',
+                        },
+                    ],
+                },
+            )
+
+    import acme_app.application.planner as planner_mod
+    monkeypatch.setattr(planner_mod, 'get_provider', lambda *_a, **_kw: _Provider())
+
+    plan, _resp = await create_plan(
+        'The user selected customer "Acme Manufacturing Group" to answer their previous request.',
+        'ollama-llama',
+        {'role': 'sales_user'},
+    )
+
+    assert plan.steps == []
+
+
 def test_llm_unavailable_error_is_runtime_error():
     """The orchestrator catches it via the broad except clause."""
     err = LLMUnavailableError('no llm')

@@ -482,6 +482,14 @@ table.tbl tr:hover td { background: var(--bg-surface-raised); }
   font-size: 13px;
   color: var(--text-high);
   line-height: 1.6;
+  border-radius: var(--radius-md);
+  transition: background-color 140ms ease, box-shadow 140ms ease, outline-color 140ms ease;
+}
+.msg-bot.evidence-hover .msg-body-bot {
+  background: rgba(16, 185, 129, 0.055);
+  padding: 10px 14px;
+  margin: -10px -14px;
+  box-shadow: 0 0 0 1px var(--accent-border);
 }
 .msg-body-bot p { margin-bottom: 10px; }
 .msg-body-bot strong { color: var(--text-primary); font-weight: 500; }
