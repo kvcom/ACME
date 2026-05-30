@@ -564,6 +564,92 @@ table.tbl tr:hover td { background: var(--bg-surface-raised); }
   border-top: 1px solid var(--border-subtle);
 }
 .action-card .af .btn { flex: 1; justify-content: center; }
+.action-card-inline {
+  width: min(100%, 620px);
+  margin: 12px 0 10px;
+}
+.action-card-inline .ah { padding: 8px 10px; }
+.action-card-inline .ab { padding: 10px; }
+.action-card-inline .af { padding: 9px 10px; }
+.action-result {
+  width: min(100%, 620px);
+  margin: 12px 0 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-medium);
+  background: var(--bg-surface);
+}
+.action-result.created {
+  border-color: rgba(16, 185, 129, 0.42);
+  background: rgba(16, 185, 129, 0.07);
+}
+.action-result.cancelled {
+  border-color: var(--border-medium);
+  background: rgba(255, 255, 255, 0.025);
+}
+.action-result.denied {
+  border-color: var(--color-danger-dim);
+  background: var(--color-danger-bg);
+}
+.action-result .label { margin-bottom: 5px; }
+.action-result.created .label { color: var(--color-active-dim); }
+.action-result.cancelled .label { color: var(--text-muted); }
+.action-result.denied .label { color: var(--color-danger-dim); }
+.action-result-title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.action-result p {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.action-result code {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: var(--bg-surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--text-high);
+}
+
+/* Centered confirmation modal */
+.confirm-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.86);
+}
+.confirm-modal {
+  width: min(420px, calc(100vw - 48px));
+  background: #101010;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 26px 80px rgba(0, 0, 0, 0.86), 0 0 0 1px rgba(0, 0, 0, 0.85);
+  overflow: hidden;
+}
+.confirm-modal-head { padding: 18px 18px 14px; }
+.confirm-modal-title {
+  margin-top: 8px;
+  color: var(--text-high);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.confirm-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.018);
+}
+.confirm-modal-foot .btn { min-width: 82px; justify-content: center; }
 
 /* Trace summary box */
 .trace-summary {
@@ -592,10 +678,64 @@ table.tbl tr:hover td { background: var(--bg-surface-raised); }
   gap: 10px; padding: 8px 10px;
   border-radius: var(--radius-md);
   font-size: 11px;
+  cursor: default;
 }
-.ev-item:hover { background: var(--bg-surface-raised); }
+.ev-item:hover,
+.ev-item:focus { background: var(--bg-surface-raised); outline: 0; }
 .ev-item .ref { font-family: var(--font-mono); color: var(--text-secondary); font-size: 10px; }
 .ev-item .desc { color: var(--text-muted); font-size: 10px; line-height: 1.4; }
+
+.evidence-popover {
+  position: fixed;
+  z-index: 60;
+  max-width: calc(100vw - 24px);
+  overflow: hidden;
+  background: var(--bg-surface);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  display: none;
+}
+.evidence-popover.open { display: block; }
+.evidence-popover-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: rgba(16, 185, 129, 0.045);
+}
+.evidence-popover-head .mono {
+  text-align: right;
+  overflow-wrap: anywhere;
+  max-width: 62%;
+}
+.evidence-popover-body {
+  max-height: calc(min(70vh, 520px));
+  overflow: auto;
+  padding: 10px 12px;
+}
+.evidence-popover-row {
+  display: grid;
+  grid-template-columns: minmax(104px, 26%) minmax(0, 1fr);
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  align-items: start;
+}
+.evidence-popover-row:last-child { border-bottom: 0; }
+.evidence-popover-row .k {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.evidence-popover-row .v {
+  color: var(--text-high);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
 
 /* Inline icon chip — small svg icon in a tinted circle
    <span class="iconchip"><svg>…</svg></span> */

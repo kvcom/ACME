@@ -21,3 +21,10 @@ def test_create_request_is_write_intent():
 def test_open_issues_is_not_write_intent_but_open_ticket_is():
     assert not _explicit_write_intent('Show me the open issues for Northwind.')
     assert _explicit_write_intent('Open a ticket for ISS-102.')
+
+
+def test_expanded_issue_followup_preserves_write_intent():
+    assert _explicit_write_intent(
+        'The user provided "ISS-102" as the issue/customer target for their previous request: '
+        '"Create that recovery plan action and assign it to support." Preserve that original request.'
+    )

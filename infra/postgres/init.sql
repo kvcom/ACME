@@ -17,10 +17,16 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS user_roles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- Append-only model (D-017): role rows are deactivated, never deleted.
+    -- ON DELETE CASCADE is retained as a backstop for dev wipes only — the
+    -- app code never deletes a `users` row.
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role_name TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT true,
     granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     granted_by TEXT,
+    revoked_at TIMESTAMPTZ,
+    revoked_by TEXT,
     CONSTRAINT unique_user_role UNIQUE (user_id, role_name),
     CONSTRAINT role_name_supported CHECK (role_name IN ('sales_user','support_user','admin'))
 );
@@ -88,6 +94,10 @@ CREATE TABLE IF NOT EXISTS next_actions (
     due_at TIMESTAMPTZ,
     rationale TEXT NOT NULL,
     evidence_json JSONB NOT NULL DEFAULT '[]',
+    -- Identity link (D-017): created_by_user_id is the live FK to the
+    -- system user who proposed the action; created_by + created_by_role
+    -- stay as historical snapshots.
+    created_by_user_id UUID REFERENCES users(id),
     created_by TEXT NOT NULL,
     created_by_role TEXT NOT NULL,
     created_from_trace_id UUID,
@@ -102,6 +112,10 @@ CREATE TABLE IF NOT EXISTS next_actions (
 CREATE TABLE IF NOT EXISTS conversations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_ref TEXT NOT NULL UNIQUE,
+    -- Identity link (D-017): user_id is the live FK, username is the
+    -- historical display snapshot. Both are kept so audit reads still show
+    -- what the user was called at the time.
+    user_id UUID REFERENCES users(id),
     username TEXT NOT NULL,
     title TEXT,
     started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -120,6 +134,9 @@ CREATE TABLE IF NOT EXISTS agent_traces (
     trace_ref TEXT NOT NULL UNIQUE,
     otel_trace_id TEXT,
     conversation_id UUID REFERENCES conversations(id),
+    -- Identity link (D-017): user_id is the live FK, username + user_role
+    -- are the historical display snapshots frozen at write time.
+    user_id UUID REFERENCES users(id),
     username TEXT NOT NULL,
     user_role TEXT NOT NULL,
     user_query TEXT NOT NULL,
@@ -192,6 +209,11 @@ CREATE TABLE IF NOT EXISTS eval_results (
     eval_run_id UUID REFERENCES eval_runs(id),
     case_id TEXT NOT NULL,
     query TEXT NOT NULL,
+    -- Identity link (D-017): every eval case runs under one of the three
+    -- permanent eval-persona users (eval.sales / eval.support / eval.admin),
+    -- which connects the eval island to the identity graph. role_name is
+    -- still kept as a historical snapshot.
+    user_id UUID REFERENCES users(id),
     role_name TEXT NOT NULL,
     expected_tools TEXT[] NOT NULL,
     actual_tools TEXT[] NOT NULL,
@@ -205,3 +227,63 @@ CREATE TABLE IF NOT EXISTS eval_results (
     notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ─── Active-row views (D-017) ────────────────────────────────────────────────
+-- The application reads listings from these views so the "WHERE is_active"
+-- filter cannot be forgotten. Audit and trace endpoints continue to read
+-- from the base tables directly.
+
+CREATE OR REPLACE VIEW v_active_users AS
+    SELECT * FROM users
+    WHERE is_active = true AND deleted_at IS NULL;
+
+CREATE OR REPLACE VIEW v_active_user_roles AS
+    SELECT ur.* FROM user_roles ur
+    JOIN users u ON u.id = ur.user_id
+    WHERE ur.is_active = true
+      AND u.is_active = true
+      AND u.deleted_at IS NULL;
+
+CREATE OR REPLACE VIEW v_active_customers AS
+    SELECT * FROM customers
+    WHERE status = 'active';
+
+CREATE OR REPLACE VIEW v_active_conversations AS
+    SELECT * FROM conversations
+    WHERE deleted_at IS NULL;
+
+-- ─── GDPR Article 17 erasure path (D-017) ────────────────────────────────────
+-- Overwrites PII columns for one user's rows without changing row counts.
+-- Builds on the at-ingest PII redactor (D-012) — user_query_redacted is
+-- already scrubbed, so this function targets the raw user_query column
+-- and the user's own profile fields.
+
+CREATE OR REPLACE FUNCTION redact_user_pii(target_user_id UUID)
+RETURNS TABLE(users_redacted INT, traces_redacted INT) AS $$
+DECLARE
+    target_username TEXT;
+    u_count INT := 0;
+    t_count INT := 0;
+BEGIN
+    SELECT username INTO target_username FROM users WHERE id = target_user_id;
+    IF target_username IS NULL THEN
+        RAISE EXCEPTION 'redact_user_pii: no user with id %', target_user_id;
+    END IF;
+
+    UPDATE users
+       SET email = '[REDACTED-GDPR]',
+           display_name = '[REDACTED-GDPR]'
+     WHERE id = target_user_id;
+    GET DIAGNOSTICS u_count = ROW_COUNT;
+
+    UPDATE agent_traces
+       SET user_query = '[REDACTED-GDPR]'
+     WHERE user_id = target_user_id
+        OR username = target_username;
+    GET DIAGNOSTICS t_count = ROW_COUNT;
+
+    users_redacted := u_count;
+    traces_redacted := t_count;
+    RETURN NEXT;
+END;
+$$ LANGUAGE plpgsql;

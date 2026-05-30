@@ -35,8 +35,11 @@ class UserRole(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     role_name: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     granted_at: Mapped[datetime] = mapped_column(nullable=False)
     granted_by: Mapped[str | None] = mapped_column(Text)
+    revoked_at: Mapped[datetime | None] = mapped_column()
+    revoked_by: Mapped[str | None] = mapped_column(Text)
 
 
 class Customer(Base):
@@ -97,6 +100,7 @@ class NextAction(Base):
     due_at: Mapped[datetime | None] = mapped_column()
     rationale: Mapped[str] = mapped_column(Text, nullable=False)
     evidence_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey('users.id'))
     created_by: Mapped[str] = mapped_column(Text, nullable=False)
     created_by_role: Mapped[str] = mapped_column(Text, nullable=False)
     created_from_trace_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
@@ -111,6 +115,7 @@ class Conversation(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     conversation_ref: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey('users.id'))
     username: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime] = mapped_column(nullable=False)
@@ -126,6 +131,7 @@ class AgentTrace(Base):
     trace_ref: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     otel_trace_id: Mapped[str | None] = mapped_column(Text)
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey('users.id'))
     username: Mapped[str] = mapped_column(Text, nullable=False)
     user_role: Mapped[str] = mapped_column(Text, nullable=False)
     user_query: Mapped[str] = mapped_column(Text, nullable=False)
@@ -208,6 +214,7 @@ class EvalResult(Base):
     eval_run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     case_id: Mapped[str] = mapped_column(Text, nullable=False)
     query: Mapped[str] = mapped_column(Text, nullable=False)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey('users.id'))
     role_name: Mapped[str] = mapped_column(Text, nullable=False)
     expected_tools: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
     actual_tools: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)

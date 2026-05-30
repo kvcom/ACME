@@ -13,6 +13,7 @@ from acme_app.api.routes_auth import router as auth_router
 from acme_app.api.routes_chat import router as chat_router
 from acme_app.api.routes_conversations import router as conversations_router
 from acme_app.api.routes_eval import router as eval_router
+from acme_app.api.routes_evidence import router as evidence_router
 from acme_app.api.routes_health import router as health_router
 from acme_app.api.routes_traces import router as traces_router
 from acme_app.auth.current_user import get_optional_user
@@ -36,6 +37,7 @@ app.include_router(chat_router)
 app.include_router(conversations_router)
 app.include_router(actions_router)
 app.include_router(traces_router)
+app.include_router(evidence_router)
 app.include_router(eval_router)
 
 

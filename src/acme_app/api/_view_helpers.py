@@ -15,6 +15,7 @@ _BADGE_CLASS = {
     'Needs Review': 'needsreview',
     'Permission Denied': 'denied',
     'Action Proposed': 'proposed',
+    'Confirmation Required': 'proposed',
     'Action Created': 'created',
     'Action Cancelled': 'cancelled',
     'Insufficient Evidence': 'insufficient',

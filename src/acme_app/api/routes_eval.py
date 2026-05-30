@@ -24,7 +24,7 @@ _BADGE_FROM_NOTES = {
     'clarify': 'Clarification Required',
     'blocked': 'Adversarial Input Blocked',
     'insufficient': 'Insufficient Evidence',
-    'proposed': 'Action Proposed',
+    'proposed': 'Confirmation Required',
     'grounded': 'Grounded',
 }
 

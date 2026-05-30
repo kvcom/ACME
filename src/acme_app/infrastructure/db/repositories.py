@@ -31,10 +31,110 @@ async def list_customers(session: AsyncSession, name_like: str | None = None) ->
     return [{'customer_id': r[0], 'name': r[1], 'region': r[2], 'tier': r[3]} for r in rows]
 
 
+def _serialise_record(row: Any) -> dict[str, Any]:
+    record = dict(row._mapping)
+    for key, value in list(record.items()):
+        if isinstance(value, datetime):
+            record[key] = value.isoformat()
+        elif isinstance(value, Decimal):
+            record[key] = float(value)
+        elif isinstance(value, uuid.UUID):
+            record[key] = str(value)
+    return record
+
+
+async def get_evidence_record(session: AsyncSession, kind: str, identifier: str) -> dict[str, Any] | None:
+    """Resolve an evidence reference to its source database row.
+
+    This is intentionally allowlisted by evidence kind rather than exposing
+    arbitrary table/column selection to the browser.
+    """
+    kind = kind.strip().lower()
+    identifier = identifier.strip()
+    if not identifier:
+        return None
+
+    if kind == 'issue':
+        row = (await session.execute(text("""
+            SELECT id::text, issue_ref, customer_id::text, title, description, severity,
+                   status, sla_status, owner, opened_at, updated_at
+            FROM issues
+            WHERE issue_ref = :identifier
+            LIMIT 1
+        """), {'identifier': identifier})).first()
+        table = 'issues'
+    elif kind == 'update':
+        row = (await session.execute(text("""
+            SELECT u.id::text, u.issue_id::text, i.issue_ref, u.update_text,
+                   u.update_type, u.created_by, u.created_at
+            FROM issue_updates u
+            JOIN issues i ON i.id = u.issue_id
+            WHERE u.id::text = :identifier
+            LIMIT 1
+        """), {'identifier': identifier})).first()
+        table = 'issue_updates'
+    elif kind == 'customer':
+        row = (await session.execute(text("""
+            SELECT id::text, name, industry, tier, region, customer_timezone,
+                   account_owner, status, created_at
+            FROM customers
+            WHERE id::text = :identifier OR name = :identifier
+            LIMIT 1
+        """), {'identifier': identifier})).first()
+        table = 'customers'
+    elif kind in {'action', 'next_action'}:
+        row = (await session.execute(text("""
+            SELECT id::text, action_ref, customer_id::text, issue_id::text, action_type,
+                   title, description, priority, status, owner_role, owner_name, due_at,
+                   rationale, evidence_json, created_by, created_by_role,
+                   idempotency_key, created_at, updated_at, completed_at
+            FROM next_actions
+            WHERE action_ref = :identifier OR id::text = :identifier
+            LIMIT 1
+        """), {'identifier': identifier})).first()
+        table = 'next_actions'
+    elif kind == 'user':
+        row = (await session.execute(text("""
+            SELECT u.id::text, u.username, u.email, u.display_name,
+                   u.keycloak_subject, u.is_active, u.created_at, u.deleted_at,
+                   COALESCE(array_agg(ur.role_name ORDER BY ur.role_name)
+                            FILTER (WHERE ur.role_name IS NOT NULL), ARRAY[]::text[]) AS roles
+            FROM users u
+            LEFT JOIN user_roles ur ON ur.user_id = u.id
+            WHERE u.username = :identifier OR u.id::text = :identifier
+            GROUP BY u.id, u.username, u.email, u.display_name,
+                     u.keycloak_subject, u.is_active, u.created_at, u.deleted_at
+            LIMIT 1
+        """), {'identifier': identifier})).first()
+        table = 'users + user_roles'
+    elif kind in {'action_policy', 'action_catalogue'}:
+        row = (await session.execute(text("""
+            SELECT action_type, label, description, allowed_roles, required_fields,
+                   side_effect_level, requires_confirmation, is_active
+            FROM action_catalogue
+            WHERE action_type = :identifier
+            LIMIT 1
+        """), {'identifier': identifier})).first()
+        table = 'action_catalogue'
+    else:
+        return None
+
+    if row is None:
+        return None
+    return {'table': table, 'record': _serialise_record(row)}
+
+
 async def conversation_upsert(session: AsyncSession, conversation_ref: str, username: str, preview: str) -> None:
+    # D-017: also populate the live user_id FK alongside the username snapshot.
+    # The sub-select resolves it from username so callers don't need to know;
+    # NULL is fine when the username isn't a system user (legacy data only).
     await session.execute(text("""
-        INSERT INTO conversations (id, conversation_ref, username, title, started_at, last_message_at, last_message_preview, message_count)
-        VALUES (gen_random_uuid(), :ref, :u, :title, now(), now(), :preview, 1)
+        INSERT INTO conversations (id, conversation_ref, user_id, username, title, started_at, last_message_at, last_message_preview, message_count)
+        VALUES (
+            gen_random_uuid(), :ref,
+            (SELECT id FROM users WHERE username = :u),
+            :u, :title, now(), now(), :preview, 1
+        )
         ON CONFLICT (conversation_ref) DO UPDATE SET
             last_message_at = now(),
             last_message_preview = :preview,
@@ -90,14 +190,19 @@ async def insert_trace(
             text("SELECT id FROM conversations WHERE conversation_ref=:r"),
             {'r': conversation_ref},
         )).scalar()
+    # D-017: user_id is the live FK; username + user_role stay as historical
+    # snapshots. We resolve user_id from username in the same INSERT so callers
+    # don't need to thread it through.
     await session.execute(text("""
         INSERT INTO agent_traces (
-            id, trace_ref, otel_trace_id, conversation_id, username, user_role,
+            id, trace_ref, otel_trace_id, conversation_id,
+            user_id, username, user_role,
             user_query, user_query_redacted, detected_intent, final_answer, final_status,
             llm_provider, llm_model, prompt_tokens, completion_tokens, total_tokens,
             estimated_cost_usd, llm_latency_ms, tool_latency_ms, total_latency_ms, created_at
         ) VALUES (
-            :id, :tref, :otel, :conv, :u, :role,
+            :id, :tref, :otel, :conv,
+            (SELECT id FROM users WHERE username = :u), :u, :role,
             :q, :qr, :intent, :ans, :status,
             :prov, :model, :pt, :ct, :tt,
             :cost, :ll, :tl, :al, now()
@@ -128,6 +233,15 @@ async def insert_trace_event(
         INSERT INTO trace_events (id, trace_id, event_type, event_name, payload, latency_ms, status, created_at)
         VALUES (gen_random_uuid(), :t, :et, :en, CAST(:p AS jsonb), :lm, :s, now())
     """), {'t': trace_id, 'et': event_type, 'en': event_name, 'p': json.dumps(payload), 'lm': latency_ms, 's': status})
+
+
+async def get_trace_id_by_ref(session: AsyncSession, trace_ref: str) -> uuid.UUID | None:
+    if not trace_ref:
+        return None
+    return (await session.execute(
+        text('SELECT id FROM agent_traces WHERE trace_ref = :trace_ref'),
+        {'trace_ref': trace_ref},
+    )).scalar()
 
 
 async def insert_tool_call_log(
@@ -285,17 +399,27 @@ async def insert_eval_result(
     cost_usd: float,
     notes: str,
 ) -> None:
+    # D-017: connect the eval island to the identity graph. Each eval case
+    # runs under one of three permanent eval-persona users keyed by role.
+    eval_persona = {
+        'sales_user':   'eval.sales',
+        'support_user': 'eval.support',
+        'admin':        'eval.admin',
+    }.get(role)
     await session.execute(text("""
         INSERT INTO eval_results (
-            id, eval_run_id, case_id, query, role_name, expected_tools, actual_tools,
+            id, eval_run_id, case_id, query, user_id, role_name,
+            expected_tools, actual_tools,
             tool_selection_pass, grounding_pass, rbac_pass, action_reasonableness_pass,
             adversarial_pass, latency_ms, cost_usd, notes, created_at
         ) VALUES (
-            gen_random_uuid(), :run, :c, :q, :r, :et, :at,
+            gen_random_uuid(), :run, :c, :q,
+            (SELECT id FROM users WHERE username = :persona),
+            :r, :et, :at,
             :tsp, :gp, :rp, :arp, :ap, :lm, :cu, :n, now()
         )
     """), {
-        'run': run_id, 'c': case_id, 'q': query, 'r': role,
+        'run': run_id, 'c': case_id, 'q': query, 'persona': eval_persona, 'r': role,
         'et': expected_tools, 'at': actual_tools,
         'tsp': tool_selection_pass, 'gp': grounding_pass, 'rp': rbac_pass,
         'arp': action_reasonableness_pass, 'ap': adversarial_pass,
@@ -396,14 +520,30 @@ def _events_to_evidence(events: list[dict[str, Any]]) -> list[str]:
     proposal and confirmation events are fallbacks for older traces and write
     flows where the action payload itself carries the supporting records.
     """
+    evidence: list[str] = []
+    seen: set[str] = set()
+
+    def add(items: list[str]) -> None:
+        for item in items:
+            if item not in seen:
+                seen.add(item)
+                evidence.append(item)
+
     for ev in reversed(events):
         if ev.get('event_type') == 'final_response':
-            evidence = _normalise_evidence_items((ev.get('payload') or {}).get('evidence'))
-            if evidence:
-                return evidence
+            add(_normalise_evidence_items((ev.get('payload') or {}).get('evidence')))
+            break
+
+    for ev in events:
+        if ev.get('event_type') == 'action_confirmed':
+            add(_normalise_evidence_items((ev.get('payload') or {}).get('evidence')))
+
+    if evidence:
+        return evidence
+
     for ev in reversed(events):
-        if ev.get('event_type') in {'action_proposed', 'action_confirmed'}:
-            evidence = _normalise_evidence_items((ev.get('payload') or {}).get('evidence'))
+        if ev.get('event_type') == 'action_proposed':
+            add(_normalise_evidence_items((ev.get('payload') or {}).get('evidence')))
             if evidence:
                 return evidence
     return []
@@ -542,7 +682,7 @@ async def get_latest_pending_proposal(session: AsyncSession, conversation_ref: s
     trace_ref) without a confirmation_token — the caller mints a fresh one.
     """
     row = (await session.execute(text("""
-        SELECT e.payload, e.created_at, t.trace_ref
+        SELECT e.payload, e.created_at, t.trace_ref, t.id
         FROM trace_events e
         JOIN agent_traces t ON t.id = e.trace_id
         WHERE e.event_type = 'action_proposed'
@@ -563,6 +703,16 @@ async def get_latest_pending_proposal(session: AsyncSession, conversation_ref: s
         )).first()
         if existing is not None:
             return None  # already confirmed → not pending
+        cancelled = (await session.execute(text("""
+            SELECT 1
+            FROM trace_events
+            WHERE trace_id = :trace_id
+              AND event_type = 'action_cancelled'
+              AND payload->>'idempotency_key' = :idempotency_key
+            LIMIT 1
+        """), {'trace_id': row[3], 'idempotency_key': idem})).first()
+        if cancelled is not None:
+            return None  # user explicitly cancelled this proposal
     payload.setdefault('trace_ref', row[2])
     return payload
 

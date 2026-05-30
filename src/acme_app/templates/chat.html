@@ -110,10 +110,21 @@
     .new-conv-btn:hover { background: var(--bg-surface-raised); color: var(--text-primary); }
 
     /* Conversation row with hover-to-reveal delete affordance. */
-    .conv-item-wrap { position: relative; }
+    .conv-item-wrap {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 26px;
+      align-items: center;
+      column-gap: 4px;
+    }
+    .conv-item-wrap .conv-item { min-width: 0; }
     .conv-item-wrap.active .conv-item { background: var(--bg-surface-raised); border: 1px solid var(--border-medium); }
+    .conv-item-wrap:hover .conv-item {
+      background: var(--bg-surface-raised);
+    }
+    .conv-item-wrap:hover .conv-item .title {
+      color: var(--text-primary) !important;
+    }
     .conv-delete {
-      position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
       width: 22px; height: 22px; padding: 0;
       display: grid; place-items: center; cursor: pointer;
       background: transparent; border: 0; border-radius: 4px;

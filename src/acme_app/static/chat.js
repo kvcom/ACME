@@ -43,6 +43,7 @@
     'Needs Review': 'needsreview',
     'Permission Denied': 'denied',
     'Action Proposed': 'proposed',
+    'Confirmation Required': 'proposed',
     'Action Created': 'created',
     'Action Cancelled': 'cancelled',
     'Insufficient Evidence': 'insufficient',
@@ -287,6 +288,43 @@
   renderHistoricalAnswers();
   scrollToLatestOnLoad();
 
+  function confirmDialog({title, message, confirmLabel = 'OK', cancelLabel = 'Cancel'} = {}) {
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.className = 'confirm-modal-backdrop';
+      overlay.innerHTML = `
+        <div class="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+          <div class="confirm-modal-head">
+            <div>
+              <div class="label" id="confirm-title">${escape(title || 'Confirm')}</div>
+              <div class="confirm-modal-title">${escape(message || '')}</div>
+            </div>
+          </div>
+          <div class="confirm-modal-foot">
+            <button type="button" class="btn btn-sm" data-role="cancel">${escape(cancelLabel)}</button>
+            <button type="button" class="btn btn-sm btn-primary" data-role="confirm">${escape(confirmLabel)}</button>
+          </div>
+        </div>`;
+
+      const finish = value => {
+        document.removeEventListener('keydown', onKey);
+        overlay.remove();
+        resolve(value);
+      };
+      const onKey = ev => {
+        if (ev.key === 'Escape') finish(false);
+      };
+      overlay.addEventListener('click', ev => {
+        if (ev.target === overlay) finish(false);
+      });
+      overlay.querySelector('[data-role="cancel"]').addEventListener('click', () => finish(false));
+      overlay.querySelector('[data-role="confirm"]').addEventListener('click', () => finish(true));
+      document.addEventListener('keydown', onKey);
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.querySelector('[data-role="confirm"]')?.focus());
+    });
+  }
+
   // Sidebar delete button — soft-delete (trace data preserved per D-015).
   document.querySelectorAll('.conv-delete').forEach(btn => {
     btn.addEventListener('click', async ev => {
@@ -294,7 +332,13 @@
       ev.stopPropagation();
       const ref = btn.dataset.convRef;
       if (!ref) return;
-      if (!confirm('Hide this conversation from the sidebar?\n\nThe full trace history (events, tool calls, RBAC decisions) is preserved for audit and can still be found via /traces.')) return;
+      const ok = await confirmDialog({
+        title: 'Hide conversation',
+        message: 'Hide this conversation from the sidebar? Trace history is preserved for audit and remains available in Traces.',
+        confirmLabel: 'Hide',
+        cancelLabel: 'Cancel',
+      });
+      if (!ok) return;
       const resp = await fetch(`/conversations/${encodeURIComponent(ref)}`, {method: 'DELETE'});
       if (!resp.ok) {
         alert('Could not delete: ' + resp.status);
@@ -310,16 +354,15 @@
   });
 
   // If the server restored a stale-pending proposed action from PostgreSQL,
-  // render the Confirm card on page load. The HMAC token has already been
-  // re-minted server-side and the proposal staged back into Redis, so the
-  // existing /actions/confirm path works without changes.
+  // put the Confirm card back inline on the matching answer. The HMAC token
+  // has already been re-minted server-side and staged back into Redis.
   (function restorePendingAction() {
     const raw = document.body.dataset.pendingAction;
     if (!raw) return;
     try {
       const pa = JSON.parse(raw);
       if (pa && pa.confirmation_token && pa.action_type) {
-        renderProposedActionCard(pa);
+        restoreInlinePendingAction(pa);
       }
     } catch (e) {
       console.warn('[acme] failed to parse pending_action', e);
@@ -375,6 +418,8 @@
 
   // ── Right-rail panels ─────────────────────────────────────────────────
   let evidenceGroupCounter = 0;
+  const evidenceRecordCache = new Map();
+  let evidencePopoverTimer = null;
 
   function clearRail(options = {}) {
     if (!options.keepEvidence) {
@@ -382,7 +427,6 @@
       evidenceGroupCounter = 0;
       return;
     }
-    railEl.querySelectorAll('[data-role="action-card"], [data-role="role-reference"]').forEach(el => el.remove());
   }
 
   function evidenceParts(item) {
@@ -395,6 +439,134 @@
     if (/^UPD-\d+/i.test(raw)) return {kind: 'update', id: raw.toUpperCase()};
     if (/^CUST[-_]/i.test(raw)) return {kind: 'customer', id: raw};
     return {kind: 'record', id: raw};
+  }
+
+  function evidenceKindLabel(kind) {
+    const labels = {
+      issue: 'issue',
+      update: 'issue update',
+      customer: 'customer',
+      action: 'action',
+      next_action: 'action',
+      user: 'user + roles',
+      action_policy: 'action policy',
+      action_catalogue: 'action policy',
+    };
+    return labels[kind] || kind || 'record';
+  }
+
+  function ensureEvidencePopover() {
+    let pop = document.querySelector('[data-role="evidence-popover"]');
+    if (!pop) {
+      pop = document.createElement('div');
+      pop.className = 'evidence-popover';
+      pop.dataset.role = 'evidence-popover';
+      document.body.appendChild(pop);
+    }
+    return pop;
+  }
+
+  function hideEvidencePopover() {
+    if (evidencePopoverTimer) {
+      clearTimeout(evidencePopoverTimer);
+      evidencePopoverTimer = null;
+    }
+    const pop = document.querySelector('[data-role="evidence-popover"]');
+    if (pop) pop.classList.remove('open');
+  }
+
+  function idealEvidencePopoverWidth(data = null) {
+    const record = data?.record || {};
+    const values = Object.values(record).map(value => (
+      value === null || value === undefined ? '' :
+      typeof value === 'object' ? JSON.stringify(value) : String(value)
+    ));
+    const longest = values.reduce((max, value) => Math.max(max, value.length), 0);
+    const fields = values.length;
+    if (longest > 120) return 660;
+    if (longest > 72 || fields > 12) return 560;
+    if (longest > 44 || fields > 8) return 480;
+    return 400;
+  }
+
+  function positionEvidencePopover(pop, anchor, data = null) {
+    const rect = anchor.getBoundingClientRect();
+    const preferred = idealEvidencePopoverWidth(data);
+    const spaceLeft = rect.left - 24;
+    const spaceRight = window.innerWidth - rect.right - 24;
+    const width = Math.max(340, Math.min(preferred, Math.max(spaceLeft, spaceRight)));
+    const openLeft = spaceLeft >= spaceRight;
+    const left = openLeft
+      ? Math.max(12, rect.left - width - 12)
+      : Math.min(window.innerWidth - width - 12, rect.right + 12);
+    const maxHeight = Math.max(260, window.innerHeight - 48);
+    const top = Math.max(12, Math.min(window.innerHeight - maxHeight - 12, rect.top - 12));
+    pop.style.width = `${width}px`;
+    pop.style.maxHeight = `${maxHeight}px`;
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+  }
+
+  function renderEvidenceRecord(record) {
+    const rows = Object.entries(record || {}).map(([key, value]) => {
+      const text = value === null || value === undefined ? 'NULL'
+        : typeof value === 'object' ? JSON.stringify(value)
+        : String(value);
+      return `<div class="evidence-popover-row">
+        <span class="k">${escape(key)}</span>
+        <span class="v">${escape(text)}</span>
+      </div>`;
+    }).join('');
+    return rows || '<div class="dim">No fields returned.</div>';
+  }
+
+  async function showEvidencePopover(anchor) {
+    const evidence = anchor.dataset.evidenceRef;
+    if (!evidence) return;
+    const pop = ensureEvidencePopover();
+    positionEvidencePopover(pop, anchor);
+    pop.innerHTML = `
+      <div class="evidence-popover-head">
+        <span class="label">Evidence record</span>
+        <span class="mono dim">${escape(evidence)}</span>
+      </div>
+      <div class="evidence-popover-body"><span class="dim">Loading…</span></div>`;
+    pop.classList.add('open');
+
+    try {
+      let data = evidenceRecordCache.get(evidence);
+      if (!data) {
+        const resp = await fetch(`/evidence/record?evidence=${encodeURIComponent(evidence)}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        data = await resp.json();
+        evidenceRecordCache.set(evidence, data);
+      }
+      pop.innerHTML = `
+        <div class="evidence-popover-head">
+          <span class="label">${escape(data.table || 'Record')}</span>
+          <span class="mono dim">${escape(data.evidence || evidence)}</span>
+        </div>
+        <div class="evidence-popover-body">${renderEvidenceRecord(data.record)}</div>`;
+      positionEvidencePopover(pop, anchor, data);
+    } catch (e) {
+      pop.innerHTML = `
+        <div class="evidence-popover-head">
+          <span class="label">Evidence record</span>
+          <span class="mono dim">${escape(evidence)}</span>
+        </div>
+        <div class="evidence-popover-body"><span class="dim">Record not available.</span></div>`;
+    }
+  }
+
+  function bindEvidenceItemPopover(itemEl) {
+    itemEl.tabIndex = 0;
+    itemEl.addEventListener('mouseenter', () => {
+      if (evidencePopoverTimer) clearTimeout(evidencePopoverTimer);
+      evidencePopoverTimer = setTimeout(() => showEvidencePopover(itemEl), 180);
+    });
+    itemEl.addEventListener('mouseleave', hideEvidencePopover);
+    itemEl.addEventListener('focus', () => showEvidencePopover(itemEl));
+    itemEl.addEventListener('blur', hideEvidencePopover);
   }
 
   function ensureEvidencePanel() {
@@ -457,7 +629,9 @@
       const {kind, id} = evidenceParts(item);
       const li = document.createElement('div');
       li.className = 'ev-item';
-      li.innerHTML = `<span class="ref">${escape(id.slice(0, 14))}</span><span class="desc">${escape(kind)}</span>`;
+      li.dataset.evidenceRef = String(item || '');
+      li.innerHTML = `<span class="ref">${escape(id.slice(0, 14))}</span><span class="desc">${escape(evidenceKindLabel(kind))}</span>`;
+      bindEvidenceItemPopover(li);
       itemList.appendChild(li);
     });
     updateEvidenceCount(panel);
@@ -481,14 +655,13 @@
     });
   })();
 
-  function renderProposedActionCard(pa) {
-    clearRail({keepEvidence: true});
+  function proposedActionHtml(pa) {
     const dueText = pa.due_at ? new Date(pa.due_at).toLocaleString() : '—';
-    railEl.insertAdjacentHTML('beforeend', `
-      <div class="action-card" data-role="action-card">
+    return `
+      <div class="action-card action-card-inline" data-role="action-card" data-token="${escape(pa.confirmation_token)}">
         <div class="ah">
           <div>
-            <div class="label" style="color: var(--accent-dim);">Action proposed</div>
+            <div class="label" style="color: var(--accent-dim);">Confirmation required</div>
             <div class="mono" style="font-size:11px; color: var(--text-high); margin-top:2px;">${escape(pa.action_type)}</div>
           </div>
         </div>
@@ -510,56 +683,61 @@
           </div>` : ''}
         </div>
         <div class="af">
-          <button class="btn btn-sm" data-cancel="1">Cancel</button>
+          <button class="btn btn-sm" data-cancel="1" data-token="${escape(pa.confirmation_token)}">Cancel</button>
           <button class="btn btn-sm btn-primary" data-confirm="${escape(pa.confirmation_token)}">Confirm</button>
         </div>
         <div data-role="ttl" style="padding: 6px 12px 10px; font-family: var(--font-mono); font-size: 9px; color: var(--text-dim); text-align: center;">
           confirmation expires in <span data-role="ttl-clock">…</span>
         </div>
-      </div>`);
-    railEl.querySelector('[data-confirm]').addEventListener('click', e => confirmAction(e.currentTarget.dataset.confirm));
-    railEl.querySelector('[data-cancel]').addEventListener('click', cancelAction);
-    startTtl(pa.expires_at);
+      </div>`;
   }
 
-  function startTtl(expiresAt) {
-    const el = railEl.querySelector('[data-role="ttl-clock"]');
-    if (!el || !expiresAt) return;
+  function bindProposedActionControls(root, pa) {
+    root.querySelectorAll(`[data-confirm="${CSS.escape(pa.confirmation_token)}"]`).forEach(btn => {
+      if (btn.dataset.bound === '1') return;
+      btn.dataset.bound = '1';
+      btn.addEventListener('click', e => confirmAction(e.currentTarget.dataset.confirm));
+    });
+    root.querySelectorAll(`[data-cancel][data-token="${CSS.escape(pa.confirmation_token)}"]`).forEach(btn => {
+      if (btn.dataset.bound === '1') return;
+      btn.dataset.bound = '1';
+      btn.addEventListener('click', () => cancelAction(pa.confirmation_token));
+    });
+    startTtlFor(root, pa.expires_at);
+  }
+
+  function renderInlineProposedAction(answerRegion, pa) {
+    if (answerRegion.querySelector(`[data-role="action-card"][data-token="${CSS.escape(pa.confirmation_token)}"]`)) {
+      return;
+    }
+    answerRegion.insertAdjacentHTML('beforeend', proposedActionHtml(pa));
+    bindProposedActionControls(answerRegion, pa);
+  }
+
+  function restoreInlinePendingAction(pa) {
+    const selector = pa.trace_ref
+      ? `.msg-bot[data-trace-ref="${CSS.escape(pa.trace_ref)}"] .msg-body-bot`
+      : '.msg-bot:last-of-type .msg-body-bot';
+    const target = threadEl.querySelector(selector)
+      || [...threadEl.querySelectorAll('.msg-bot .msg-body-bot')].at(-1);
+    if (!target) return;
+    renderInlineProposedAction(target, pa);
+  }
+
+  function startTtlFor(root, expiresAt) {
+    const clocks = root.querySelectorAll('[data-role="ttl-clock"]');
+    if (!clocks.length || !expiresAt) return;
     const tick = () => {
       const left = expiresAt - Math.floor(Date.now() / 1000);
-      if (left <= 0) { el.textContent = 'expired'; return; }
+      if (left <= 0) {
+        clocks.forEach(el => { el.textContent = 'expired'; });
+        return;
+      }
       const m = Math.floor(left / 60), s = left % 60;
-      el.textContent = `${m}m ${String(s).padStart(2, '0')}s`;
+      clocks.forEach(el => { el.textContent = `${m}m ${String(s).padStart(2, '0')}s`; });
       setTimeout(tick, 1000);
     };
     tick();
-  }
-
-  function renderRoleReference(role) {
-    clearRail({keepEvidence: true});
-    const matrix = {
-      sales_user: [['read customers · issues · updates', true], ['request recommendations', true],
-                   ['create next actions', false], ['update issue status', false]],
-      support_user: [['read customers · issues · updates', true], ['propose & confirm support actions', true],
-                     ['update issue status', true], ['cancel actions', false]],
-      admin: [['read everything', true], ['propose, confirm, cancel any action', true],
-              ['reveal redacted query in trace', true]],
-    }[role] || [];
-    railEl.insertAdjacentHTML('beforeend', `
-      <div class="panel" data-role="role-reference">
-        <div class="panel-header">
-          <span class="label">Your role</span>
-          <span class="mono dim" style="font-size:10px;">${escape(role)}</span>
-        </div>
-        <div class="panel-body" style="font-family: var(--font-mono); font-size: 11px; line-height: 1.7;">
-          <div style="display: grid; grid-template-columns: 14px 1fr; gap: 8px;">
-            ${matrix.map(([t, ok]) => `
-              <span style="color: ${ok ? 'var(--color-active)' : 'var(--text-dim)'};">${ok ? '✓' : '⨯'}</span>
-              <span style="color: ${ok ? 'var(--text-high)' : 'var(--text-muted)'};">${escape(t)}</span>
-            `).join('')}
-          </div>
-        </div>
-      </div>`);
   }
 
   // ── In-thread banners ──────────────────────────────────────────────────
@@ -865,22 +1043,20 @@
         renderAdversarialBanner(answerRegion, r);
       } else if (r.badge === 'Permission Denied') {
         renderDenialBanner(answerRegion, r);
-        renderRoleReference(document.body.dataset.role);
       } else {
         await renderAnswerTyped(answerRegion, r);
       }
       renderClarificationOptions(answerRegion, r);
       renderResolutionOptions(answerRegion, r, q);
+      if (r.proposed_action) {
+        renderInlineProposedAction(answerRegion, r.proposed_action);
+      }
       renderTraceMeta(answerRegion, r);
       followThread();
 
-      if (evidenceAccum.length && r.badge !== 'Permission Denied' && r.badge !== 'Adversarial Input Blocked') {
+      if (evidenceAccum.length && r.badge !== 'Adversarial Input Blocked') {
         addEvidenceGroup(evidenceAccum, {label: 'Latest response', traceRef: r.trace_ref, focus: true});
       }
-      if (r.proposed_action) {
-        renderProposedActionCard(r.proposed_action);
-      }
-
       sendBtn.disabled = false;
       sending = false;
       queryEl.focus();
@@ -902,22 +1078,45 @@
       body: JSON.stringify({conversation_ref: convRef(), confirmation_token: token}),
     });
     const data = await resp.json();
-    const card = railEl.querySelector('[data-role="action-card"]');
-    if (!card) return;
-    const ttl = card.querySelector('[data-role="ttl"]');
-    if (ttl) ttl.remove();
-    const af = card.querySelector('.af');
-    if (af) {
-      const ok = data.created || data.duplicate;
-      af.innerHTML = `<span class="${ok ? 'badge badge-created' : 'badge badge-denied'}" style="flex:1;text-align:center;justify-content:center;">${ok ? '✓ ' + (data.action_ref || data.existing_action_ref || 'created') : (data.detail || 'rejected')}</span>`;
+    const actionRef = data.action_ref || data.existing_action_ref || '';
+    const ok = resp.ok && (data.created || data.duplicate);
+    const cards = document.querySelectorAll(`[data-role="action-card"][data-token="${CSS.escape(token)}"]`);
+    cards.forEach(card => {
+      const result = document.createElement('div');
+      result.className = `action-result ${ok ? 'created' : 'denied'}`;
+      result.innerHTML = ok ? `
+        <div class="label">${data.duplicate ? 'Existing action' : 'Action created'}</div>
+        <div class="action-result-title">${escape(actionRef || 'created')}</div>
+        <p>Saved in <code>next_actions</code>. The action row has been added to Evidence.</p>
+      ` : `
+        <div class="label">Not created</div>
+        <div class="action-result-title">Confirmation rejected</div>
+        <p>${escape(data.detail || data.reason || 'The action was not created.')}</p>
+      `;
+      card.replaceWith(result);
+    });
+    if (ok && actionRef) {
+      addEvidenceGroup([`action:${actionRef}`], {label: data.duplicate ? 'Existing action' : 'Created action', focus: true});
     }
   }
 
-  async function cancelAction() {
+  async function cancelAction(token = null) {
     await fetch('/actions/cancel', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({conversation_ref: convRef()}),
+      body: JSON.stringify({conversation_ref: convRef(), confirmation_token: token}),
     });
+    if (token) {
+      document.querySelectorAll(`[data-role="action-card"][data-token="${CSS.escape(token)}"]`).forEach(card => {
+        const result = document.createElement('div');
+        result.className = 'action-result cancelled';
+        result.innerHTML = `
+          <div class="label">Cancelled</div>
+          <div class="action-result-title">No action created</div>
+          <p>The proposal was cancelled and will not return after refresh.</p>
+        `;
+        card.replaceWith(result);
+      });
+    }
     clearRail({keepEvidence: true});
   }
 

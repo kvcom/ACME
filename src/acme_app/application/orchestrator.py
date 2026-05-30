@@ -2,8 +2,10 @@
 
 The execution loop in section 12.3 of the plan, condensed:
 
-  1. adversarial check (length + patterns)
-  2. PII redaction
+  1. adversarial check (deterministic rules + optional local-LLM second opinion;
+     OR-combined so either source can flag)
+  2. PII redaction (regex rules + optional local-LLM substring suggestions,
+     applied as a union)
   3. Redis context load (with PostgreSQL fallback when Redis has expired)
   4. LLM plan
   5. Validate plan; reject unknown tools/skills/action_types
@@ -19,6 +21,7 @@ used by the SSE endpoint. When event_sink is None (eval, tests) it is a no-op.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import json
 import re
@@ -56,8 +59,13 @@ from acme_app.observability import decision_ledger as ledger_mod
 from acme_app.observability.cost_calculator import compute as compute_cost
 from acme_app.observability.otel import current_trace_id_hex, get_tracer
 from acme_app.policy.action_guard import can_propose, verify_confirmation_token
+from acme_app.policy.local_screener import (
+    apply_extra_redactions,
+    llm_adversarial_flags,
+    llm_pii_substrings,
+    local_screener_available,
+)
 from acme_app.policy.pii_redactor import redact
-from acme_app.policy.rbac import check as rbac_check
 from acme_app.skills.registry import SKILLS
 
 
@@ -215,6 +223,36 @@ def _explicit_write_intent(query: str) -> bool:
     return bool(_WRITE_INTENT_RE.search(query) or _OPEN_WRITE_INTENT_RE.search(query))
 
 
+def _looks_like_confirmation(query: str) -> bool:
+    """Return True for short, explicit confirmations of a staged action."""
+    short_affirmations = {
+        'yes', 'yeah', 'yep', 'sure', 'ok', 'okay', 'confirm',
+        'go ahead', 'do it', 'approve', 'create it', 'create',
+        'proceed', 'please confirm',
+    }
+    normalised = query.strip().lower().rstrip('.!')
+    return (
+        '?' not in query
+        and (
+            normalised in short_affirmations
+            or normalised.startswith('confirm')
+            or normalised.startswith('yes ')
+            or len(normalised.split()) <= 3
+        )
+    )
+
+
+def _proposal_denied_answer(role: str, action_type: str, reason: str) -> str:
+    action_label = action_type.replace('_', ' ').title() if action_type else 'this action'
+    return (
+        f'Permission denied: your role `{role}` can read the evidence and recommend next steps, '
+        f'but it cannot create `{action_type}`.\n\n'
+        f'Nothing was staged or created. Ask a support user or admin to create the '
+        f'{action_label.lower()}, or continue using the recommendation as read-only guidance.\n\n'
+        f'Policy reason: {reason}'
+    )
+
+
 def _model_key_for_cost(model_name: str, fallback_key: str) -> str:
     for key, spec in MODEL_REGISTRY.items():
         if spec.model == model_name or spec.key == model_name:
@@ -290,18 +328,21 @@ def _customer_clarification_options(matches: list[dict[str, Any]]) -> list[Clari
 
 
 def _clarification_followup_query(query: str, recent_turns: list[dict[str, Any]]) -> str | None:
-    """Expand a customer-choice click into the original unresolved request.
+    """Expand a short clarification answer into the original unresolved request.
 
     Small local models often treat a clarification answer like "Acme
-    Manufacturing Group" as the whole request. This helper preserves the
-    user's choice while making the intended prior question explicit.
+    Manufacturing Group" or "ISS-102" as the whole request. This helper
+    preserves the user's choice while making the intended prior question
+    explicit, including write requests that first needed an issue/customer.
     """
     choice = query.strip()
     if not choice or '?' in choice or len(choice.split()) > 6:
         return None
 
     previous_user: str | None = None
+    clarification_kind: str | None = None
     saw_customer_clarification = False
+    saw_action_target_clarification = False
     for turn in reversed(recent_turns[-6:]):
         text = (turn.get('text') or '').strip()
         if not text:
@@ -312,13 +353,30 @@ def _clarification_followup_query(query: str, recent_turns: list[dict[str, Any]]
             or 'found 2 customers in scope' in text.lower()
         ):
             saw_customer_clarification = True
+            clarification_kind = 'customer'
             continue
-        if saw_customer_clarification and turn.get('role') == 'user':
+        if turn.get('role') == 'assistant' and (
+            'which customer or issue' in text.lower()
+            or 'which issue' in text.lower()
+            or 'provide a customer name or an issue reference' in text.lower()
+            or 'provide the issue reference' in text.lower()
+        ):
+            saw_action_target_clarification = True
+            clarification_kind = 'action_target'
+            continue
+        if (saw_customer_clarification or saw_action_target_clarification) and turn.get('role') == 'user':
             previous_user = text
             break
 
     if not previous_user:
         return None
+
+    if clarification_kind == 'action_target':
+        return (
+            f'The user provided "{choice}" as the issue/customer target for their previous request: '
+            f'"{previous_user}". Preserve that original request, including any write intent, '
+            f'and use "{choice}" as the target identifier.'
+        )
 
     return (
         f'The user selected customer "{choice}" to answer their previous request: '
@@ -357,16 +415,59 @@ async def run_agent(
         span.set_attribute('user.role', role)
         span.set_attribute('llm.provider', provider_name)
 
-        ok_length, adversarial, flags = check_query(query)
+        ok_length, rules_adversarial, rules_flags = check_query(query)
         ledger.event('auth', 'auth.validate_role', {'role': role, 'username': username})
+
+        # Stages 2 + 3 — adversarial and PII — run the deterministic rules
+        # AND, when a local Ollama model is available, a second-opinion LLM
+        # screener in parallel. Both stages fail soft: if the local model is
+        # offline or returns garbage, the orchestrator behaves exactly as
+        # before (rules-only). When the local model IS available:
+        #   adversarial → flag if rules OR local model flag it (union of reasons)
+        #   pii.redact  → apply rules first, then redact additional substrings
+        #                 the local model surfaced (regex + LLM complementary)
+        local_available = local_screener_available() and ok_length
+        if local_available:
+            llm_adv_task = asyncio.create_task(llm_adversarial_flags(query))
+            llm_pii_task = asyncio.create_task(llm_pii_substrings(query))
+            llm_adv_flags = await llm_adv_task
+            llm_pii_subs = await llm_pii_task
+        else:
+            llm_adv_flags = None
+            llm_pii_subs = None
+
+        adversarial = rules_adversarial or bool(llm_adv_flags)
+        flags = list(rules_flags)
+        if llm_adv_flags:
+            flags.extend(llm_adv_flags)
+        adv_contributors = ['rules']
+        if llm_adv_flags is not None:
+            adv_contributors.append('local_llm')
+
         ledger.event('adversarial', 'adversarial.check',
-                     {'flags': flags, 'length_ok': ok_length, 'detected': adversarial},
+                     {'flags': flags,
+                      'length_ok': ok_length,
+                      'detected': adversarial,
+                      'contributors': adv_contributors,
+                      'rules_flags': rules_flags,
+                      'llm_flags': llm_adv_flags or []},
                      status='blocked' if (adversarial or not ok_length) else 'ok')
         await _emit(event_sink, 'adversarial', {'flags': flags, 'detected': adversarial})
 
-        query_redacted = redact(query)
+        rules_redacted = redact(query)
+        query_redacted = (
+            apply_extra_redactions(rules_redacted, llm_pii_subs)
+            if llm_pii_subs else rules_redacted
+        )
+        pii_contributors = ['rules']
+        if llm_pii_subs is not None:
+            pii_contributors.append('local_llm')
         ledger.event('pii', 'pii.redact',
-                     {'changed': query_redacted != query, 'length': len(query)})
+                     {'changed': query_redacted != query,
+                      'length': len(query),
+                      'rules_changed': rules_redacted != query,
+                      'llm_added_spans': len(llm_pii_subs or []),
+                      'contributors': pii_contributors})
 
         if not ok_length:
             return await _finalise_blocked(
@@ -509,25 +610,12 @@ async def run_agent(
 
         confirm_pending = plan.intent == 'confirm_pending_action'
         if confirm_pending:
-            # Sanity gate: a confirm intent only makes sense when there's
-            # actually a pending action AND the user's message reads like a
-            # bare affirmation. Smaller models occasionally fire confirm
-            # spuriously on long questions; catch that and demote to a normal
-            # plan so we still answer the user usefully.
-            short_affirmations = {
-                'yes', 'yeah', 'yep', 'sure', 'ok', 'okay', 'confirm',
-                'go ahead', 'do it', 'approve', 'create it', 'create',
-                'proceed', 'please confirm',
-            }
-            normalised = query.strip().lower().rstrip('.!')
-            looks_like_confirm = (
-                normalised in short_affirmations
-                or normalised.startswith('confirm')
-                or normalised.startswith('yes ')
-                or len(normalised.split()) <= 3
-            )
-            looks_like_confirm = looks_like_confirm and ('?' not in query)
-            if pending and looks_like_confirm:
+            # A bare confirmation is part of the deterministic write gate.
+            # Always route it to _confirm_pending: that function gives a clear
+            # "no pending action" or "permission denied" answer instead of
+            # letting narration invent what happened.
+            looks_like_confirm = _looks_like_confirmation(query)
+            if looks_like_confirm:
                 return await _confirm_pending(
                     session=session, ledger=ledger, mcp=mcp,
                     username=username, role=role, conversation_ref=conversation_ref,
@@ -610,7 +698,19 @@ async def run_agent(
                 cumulative_evidence.extend(skill_output.get('evidence', []))
 
         proposed_dto: ProposedActionDTO | None = None
-        write_intent = _explicit_write_intent(query)
+        write_intent = _explicit_write_intent(effective_query)
+        if (
+            write_intent
+            and not plan.write_requested
+            and not plan.requires_clarification
+            and (facts.get('recommendation') or (facts.get('skill_output') or {}).get('recommended_next_action'))
+        ):
+            ledger.event(
+                'agent_plan',
+                'write_request.inferred_from_context',
+                {'reason': 'explicit write intent in effective query with recommended action'},
+            )
+            plan.write_requested = True
         if plan.write_requested and not plan.requires_clarification and not write_intent:
             ledger.event(
                 'agent_plan',
@@ -694,6 +794,12 @@ async def run_agent(
             narration_response.prompt_tokens,
             narration_response.completion_tokens,
         )
+        if facts.get('proposal_denied'):
+            denied = facts['proposal_denied']
+            cumulative_evidence.extend([
+                f'user:{username}',
+                f'action_policy:{denied.get("action_type")}',
+            ])
         evidence_list = sorted(set(cumulative_evidence))[:20]
         ledger.event('final_response', 'narration.complete',
                      {'model': narration_response.model, 'len': len(narration_response.text),
@@ -717,9 +823,17 @@ async def run_agent(
             answer = narrated or facts.get('ambiguous_customer_fallback_text') \
                      or 'Could you clarify which customer or issue you mean?'
             badge = 'Clarification Required'
+        elif facts.get('proposal_denied'):
+            denied = facts['proposal_denied']
+            answer = _proposal_denied_answer(
+                str(denied.get('role') or role),
+                str(denied.get('action_type') or ''),
+                str(denied.get('reason') or 'role is not allowed to create this action'),
+            )
+            badge = 'Permission Denied'
         elif proposed_dto is not None:
             answer = narration_response.text
-            badge = 'Action Proposed'
+            badge = 'Confirmation Required'
         elif plan.intent == 'adversarial':
             answer = narration_response.text
             badge = 'Adversarial Input Blocked'
@@ -728,7 +842,11 @@ async def run_agent(
             has_evidence = bool(cumulative_evidence) or bool(facts.get('skill_output'))
             badge = badge_for(has_evidence=has_evidence)
 
-        if not plan.requires_clarification and _needs_customer_status_fallback(answer, facts):
+        if (
+            not plan.requires_clarification
+            and badge != 'Permission Denied'
+            and _needs_customer_status_fallback(answer, facts)
+        ):
             answer = _render_customer_status_answer(facts, role)
             ledger.event(
                 'final_response',
@@ -1053,6 +1171,11 @@ async def _maybe_propose(
                  {'role': role, 'action_type': action_type, 'allowed': allowed, 'reason': reason},
                  status='ok' if allowed else 'denied')
     if not allowed:
+        facts['proposal_denied'] = {
+            'action_type': action_type,
+            'reason': reason,
+            'role': role,
+        }
         await _emit(event_sink, 'rbac_denied', {'reason': reason, 'action_type': action_type})
         return None
     issue_history = facts.get('issue_history') or {}
@@ -1117,7 +1240,11 @@ async def _confirm_pending(
         return await _finalise_blocked(
             session, ledger, query, query_redacted, provider_name, conversation_ref,
             badge='Clarification Required',
-            answer='I do not have a pending action to confirm. Please re-issue the request.',
+            answer=(
+                'There is no pending proposed action to confirm in this conversation. '
+                'Nothing was created. Ask me to propose the action again; if your role '
+                'is allowed to create it, I will show a confirmation card.'
+            ),
             intent='no_pending_action', started_ms=started_ms,
             llm_response=llm_plan_response,
         )
@@ -1125,14 +1252,14 @@ async def _confirm_pending(
     ledger.event('action_validation', 'token.verify',
                  {'ok': ok_tok, 'reason': why_tok},
                  status='ok' if ok_tok else 'error')
-    decision = rbac_check(role, 'create_action')
+    allowed, reason = can_propose(role, pending['action_type'])
     ledger.rbac(role=role, operation='create_action', resource=pending['action_type'],
-                allowed=decision.allowed, reason=decision.reason)
-    if not (ok_tok and decision.allowed):
+                allowed=allowed, reason=reason)
+    if not (ok_tok and allowed):
         return await _finalise_blocked(
             session, ledger, query, query_redacted, provider_name, conversation_ref,
             badge='Permission Denied',
-            answer=f'Cannot confirm action: {why_tok if not ok_tok else decision.reason}',
+            answer=f'Cannot confirm action: {why_tok if not ok_tok else reason}',
             intent='confirm_denied', started_ms=started_ms,
             llm_response=llm_plan_response,
         )
@@ -1158,7 +1285,7 @@ async def _confirm_pending(
             answer = f'Action already exists ({result["existing_action_ref"]}); no duplicate was created.'
             badge = 'Action Created'
         elif result.get('created'):
-            answer = f'Action {result["action_ref"]} created and assigned to {role}.'
+            answer = f'Action {result["action_ref"]} created for {pending["issue_ref"]} and assigned to {username}.'
             badge = 'Action Created'
         else:
             answer = f'Confirmation rejected: {result.get("reason")}'

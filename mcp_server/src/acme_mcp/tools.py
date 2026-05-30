@@ -261,22 +261,30 @@ def create_next_action(
             return {'created': False, 'denied': True, 'reason': f'Issue {issue_ref} not found'}
         issue_id, customer_id = issue
         action_ref = f'NA-{int(datetime.utcnow().timestamp() * 1000) % 10_000_000}'
+        # D-017: created_by_user_id is the live FK to the proposing user;
+        # created_by + created_by_role stay as historical snapshots.
+        # Resolved via sub-select against users(username); NULL when the
+        # actor isn't a known system user (shouldn't happen in normal flow).
         cur.execute(
             """
             INSERT INTO next_actions (
                 action_ref, customer_id, issue_id, action_type, title, description, priority, status,
-                owner_role, owner_name, due_at, rationale, evidence_json, created_by, created_by_role,
+                owner_role, owner_name, due_at, rationale, evidence_json,
+                created_by_user_id, created_by, created_by_role,
                 idempotency_key
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, 'Open',
-                %s, %s, %s, %s, %s::jsonb, %s, %s,
+                %s, %s, %s, %s, %s::jsonb,
+                (SELECT id FROM users WHERE username = %s), %s, %s,
                 %s
             )
             """,
             (
                 action_ref, customer_id, issue_id, action_type, title, description, priority,
                 role, actor.get('username'), due_at, 'Created via MCP create_next_action',
-                json.dumps(evidence or []), actor.get('username', ''), role, idempotency_key,
+                json.dumps(evidence or []),
+                actor.get('username', ''), actor.get('username', ''), role,
+                idempotency_key,
             ),
         )
         conn.commit()

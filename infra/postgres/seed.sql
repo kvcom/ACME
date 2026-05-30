@@ -7,6 +7,29 @@ INSERT INTO users (username, email, display_name) VALUES
 ('admin.acme',   'admin.acme@example.local',   'Admin Acme')
 ON CONFLICT (username) DO NOTHING;
 
+-- Eval-persona users (D-017): permanent rows that connect the eval island
+-- (eval_runs, eval_results) to the identity graph. They never log in;
+-- is_active=false hides them from user pickers but lets eval_results.user_id
+-- carry a valid FK so the ER diagram has no orphans.
+INSERT INTO users (username, email, display_name, is_active) VALUES
+('eval.sales',   'eval.sales@example.local',   'Eval Sales Persona',   false),
+('eval.support', 'eval.support@example.local', 'Eval Support Persona', false),
+('eval.admin',   'eval.admin@example.local',   'Eval Admin Persona',   false)
+ON CONFLICT (username) DO NOTHING;
+
+INSERT INTO user_roles (user_id, role_name, granted_by)
+SELECT u.id, 'sales_user', 'seed-eval'
+FROM users u WHERE u.username = 'eval.sales'
+ON CONFLICT DO NOTHING;
+INSERT INTO user_roles (user_id, role_name, granted_by)
+SELECT u.id, 'support_user', 'seed-eval'
+FROM users u WHERE u.username = 'eval.support'
+ON CONFLICT DO NOTHING;
+INSERT INTO user_roles (user_id, role_name, granted_by)
+SELECT u.id, 'admin', 'seed-eval'
+FROM users u WHERE u.username = 'eval.admin'
+ON CONFLICT DO NOTHING;
+
 INSERT INTO user_roles (user_id, role_name, granted_by)
 SELECT u.id, 'sales_user', 'seed'
 FROM users u WHERE u.username = 'sarah.sales'

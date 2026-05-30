@@ -28,6 +28,7 @@ class ConfirmInput(BaseModel):
 
 class CancelInput(BaseModel):
     conversation_ref: str = 'CONV-DEMO'
+    confirmation_token: str | None = None
 
 
 @router.post('/confirm')
@@ -74,6 +75,25 @@ async def confirm_action(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     if result.get('created') or result.get('duplicate'):
+        action_ref = result.get('action_ref') or result.get('existing_action_ref')
+        evidence = list(pending.get('evidence') or [])
+        if action_ref:
+            evidence.append(f'action:{action_ref}')
+        result['evidence'] = evidence
+        trace_id = await repo.get_trace_id_by_ref(session, pending.get('trace_ref', ''))
+        if trace_id:
+            await repo.insert_trace_event(
+                session,
+                trace_id=trace_id,
+                event_type='action_confirmed',
+                event_name='action.confirmed',
+                payload={
+                    **result,
+                    'action_type': pending.get('action_type'),
+                    'issue_ref': pending.get('issue_ref'),
+                    'evidence': evidence,
+                },
+            )
         await clear_pending_action(payload.conversation_ref)
     return result
 
@@ -82,7 +102,25 @@ async def confirm_action(
 async def cancel_action(
     payload: CancelInput,
     _user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    pending = await get_pending_action(payload.conversation_ref)
+    if pending and payload.confirmation_token and pending.get('confirmation_token') == payload.confirmation_token:
+        trace_id = await repo.get_trace_id_by_ref(session, pending.get('trace_ref', ''))
+        if trace_id:
+            await repo.insert_trace_event(
+                session,
+                trace_id=trace_id,
+                event_type='action_cancelled',
+                event_name='action.cancelled',
+                payload={
+                    'cancelled': True,
+                    'action_type': pending.get('action_type'),
+                    'issue_ref': pending.get('issue_ref'),
+                    'idempotency_key': pending.get('idempotency_key'),
+                    'reason': 'user_cancelled',
+                },
+            )
     await clear_pending_action(payload.conversation_ref)
     return {'cancelled': True}
 

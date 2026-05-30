@@ -153,3 +153,41 @@ B was chosen. It removes the single-source-of-truth ambiguity (with A, two syste
 - Add a short-TTL Redis cache and a SIGHUP-style cookie-invalidation channel so revocations propagate within seconds.
 - Promote `granted_by` to a foreign key to `users.id` and add a `user_role_audit` table that captures grant/revoke events.
 - Replace direct grant with Authorization Code + PKCE (D-003) but keep this same role-resolution rule on the callback.
+
+
+## D-017 · Append-only database with universal soft-delete and a connected ER graph
+
+**Choice**: The application never emits `DELETE`. Lifecycle changes are expressed by updating an existing column on the row — entity-specific where one already exists (`customers.status`, `issues.status`, `next_actions.status`, `conversations.deleted_at`), generic `is_active boolean` where one didn't. Once "rows never leave" is a global invariant, every `username` / actor column in the audit and business graph also carries a real `user_id` FK into `users(id)`, so the ER diagram becomes a single connected graph with no orphan islands except the eval harness (and even that gains FK links via three permanent eval-persona users).
+
+**Why**: The Decision Ledger principle (plan_v2 §2.5) and D-015 (soft-delete of conversations) were already pulling in this direction per-table. Universalising the rule simplifies reasoning ("nothing ever leaves") and unlocks proper FKs everywhere without the previous fear that a user deletion would cascade-destroy the audit trail.
+
+**Rules of the model**:
+- `INSERT` and `UPDATE` are the only DML the application emits against business or identity tables.
+- `DELETE` is forbidden in repositories — audit tables additionally have UPDATE forbidden so history can never be rewritten (immutability via Postgres role privilege, not policy hope).
+- **Corrections** (typos, data fixes) are UPDATEs on the live row.
+- **End-of-life** sets the existing lifecycle column (`status`, `deleted_at`) or `is_active=false` for tables without a richer lifecycle.
+- The only way rows actually leave the database is a dev-time `docker compose down -v` — outside the app's reach.
+
+**Implementation**:
+- **Lifecycle columns**: kept where they encode domain meaning (`customers.status`, `issues.status`, `next_actions.status`, `next_actions.completed_at`, `conversations.deleted_at`, `users.is_active`/`deleted_at`, `action_catalogue.is_active`). Added `user_roles.is_active` because that was the one identity-side table without a deactivation path.
+- **FK columns** added alongside (not replacing) the snapshot text columns:
+  - `conversations.user_id` → `users(id)`
+  - `agent_traces.user_id` → `users(id)`
+  - `next_actions.created_by_user_id` → `users(id)`
+  - `eval_results.user_id` → `users(id)` (via three new eval-persona users `eval.sales` / `eval.support` / `eval.admin`, seeded `is_active=false` so they don't appear in user pickers)
+- **TEXT snapshots stay**: `agent_traces.username`, `rbac_decisions.username`, etc. The FK is the live join; the TEXT is the historical display value frozen at write time. If a user's `display_name` changes later, old traces still read what the user actually was called.
+- **Active-row views** (SQL views, so the filter is impossible to forget):
+  - `v_active_users` — `users` with `is_active=true AND deleted_at IS NULL`
+  - `v_active_user_roles` — `user_roles` with `is_active=true`
+  - `v_active_customers` — `customers` with `status = 'active'`
+  - `v_active_conversations` — `conversations` with `deleted_at IS NULL`
+  - Listing endpoints read from views; audit/trace endpoints read from base tables.
+- **GDPR Article 17 erasure path**: stored function `redact_user_pii(user_id)` overwrites `users.email`, `users.display_name`, and the raw `agent_traces.user_query` for that user's traces with the literal token `[REDACTED-GDPR]`. The row count stays the same; the redaction itself is logged. Builds on the at-ingest PII redactor (D-012) — `user_query_redacted` already had the regex-targeted PII removed at write time, so the residual privacy risk is the raw `user_query` column, and the function blanks that.
+- **Display-string actor columns** (`customers.account_owner`, `issues.owner`, `next_actions.owner_name`, `issue_updates.created_by`) remain TEXT for now. They can legitimately hold non-system actors ("eng.team", "partner.ops", external owners). Promoting them to FKs requires a separate "staff/personnel" model decision and is deferred — they are not blockers for the no-orphan goal because the *current-user* and *creator* FKs above already link the audit and business graphs to identity.
+- **Storage policy** (not yet implemented, captured here so the choice is visible): partition `agent_traces` and `trace_events` by month; archive partitions older than two years to cold object storage. The hot DB stays small even though "nothing ever leaves".
+
+**Production**:
+- Replace redaction-in-place with **crypto-shredding**: encrypt PII columns with a per-user key, drop the key on erasure. Row count unchanged, PII becomes unrecoverable ciphertext, no need to overwrite text.
+- Add the storage-partitioning + cold-archive job. Audit tables get bigger forever otherwise.
+- Tighten the FK story for ownership: introduce a `staff` table covering both system users and named non-user actors, and promote the display-string columns to FKs against it.
+- Enforce immutability at the DB role level: the application's DB role should have `INSERT, UPDATE` on identity/business tables, `INSERT only` on audit tables, and `DELETE` on nothing. The dev "wipe" runs as a different role.
