@@ -37,10 +37,11 @@ from acme_app.application.db_explorer import (
     DEFAULT_ORDER,
     EXPLORER_TABLES,
     LINKS,
-    TABLE_COLUMNS,
+    columns_for,
     expandable_fields,
     is_table_allowed,
     links_for,
+    resolve_columns,
 )
 from acme_app.auth.current_user import CurrentUser, get_current_user
 from acme_app.infrastructure.db.session import get_db_session
@@ -66,7 +67,10 @@ def _validate_table(table: str) -> str:
 
 
 def _validate_field(table: str, field: str) -> str:
-    if field not in TABLE_COLUMNS.get(table, []):
+    # Validates against the LIVE column set (resolve_columns() must have been
+    # awaited earlier in the request). Still an allow-list — the field has to
+    # be a real column on a real explorer table before it touches SQL.
+    if field not in columns_for(table):
         raise HTTPException(status_code=400, detail=f'unknown field {field} on {table}')
     return field
 
@@ -92,15 +96,17 @@ async def _query_rows(
     where_value: Any = None,
     limit: int = ROW_LIMIT_DEFAULT,
 ) -> list[dict[str, Any]]:
-    cols = TABLE_COLUMNS[table]
-    col_list = ', '.join(cols)  # safe — validated against allow-list
+    # Ensure the live column set is loaded, then build the SELECT from it.
+    await resolve_columns()
+    cols = columns_for(table)
+    col_list = ', '.join(cols)  # safe — every name is a real introspected column
     where_sql = ''
     params: dict[str, Any] = {'n': min(limit, ROW_LIMIT_MAX)}
     if where_field is not None:
         _validate_field(table, where_field)
         where_sql = f'WHERE {where_field} = :v'
         params['v'] = where_value
-    order = DEFAULT_ORDER.get(table, cols[0])
+    order = DEFAULT_ORDER.get(table, cols[0] if cols else 'id')
     sql = f'SELECT {col_list} FROM {table} {where_sql} ORDER BY {order} LIMIT :n'  # noqa: S608 — identifiers are allow-listed
     rows = (await session.execute(text(sql), params)).mappings().all()
     return [{k: _serialise(v) for k, v in row.items()} for row in rows]
@@ -113,10 +119,12 @@ async def db_explorer_page(
 ) -> HTMLResponse:
     _require_admin(user)
     # Pre-bake the per-table metadata the JS layer needs so the page works
-    # without a separate metadata fetch round-trip.
+    # without a separate metadata fetch round-trip. Columns are the LIVE,
+    # introspected set so every real column is shown.
+    columns = await resolve_columns()
     metadata = {
         'tables': EXPLORER_TABLES,
-        'columns': TABLE_COLUMNS,
+        'columns': columns,
         'links': {table: expandable_fields(table) for table in EXPLORER_TABLES},
     }
     return request.app.state.templates.TemplateResponse(
@@ -135,9 +143,10 @@ async def metadata(
     columns / relationships in its registry (e.g. after a developer added
     one), open browser tabs pick up the change without manual refresh."""
     _require_admin(user)
+    columns = await resolve_columns()
     return {
         'tables': EXPLORER_TABLES,
-        'columns': TABLE_COLUMNS,
+        'columns': columns,
         'links': {table: expandable_fields(table) for table in EXPLORER_TABLES},
     }
 
@@ -154,7 +163,7 @@ async def rows_for_table(
     rows = await _query_rows(session, table, limit=limit)
     return {
         'table': table,
-        'columns': TABLE_COLUMNS[table],
+        'columns': columns_for(table),
         'rows': rows,
         'links': expandable_fields(table),
         'row_count': len(rows),
@@ -178,6 +187,8 @@ async def related_rows(
     """
     _require_admin(user)
     _validate_table(table)
+    # Load the live column cache before any field validation below.
+    await resolve_columns()
     _validate_field(table, field)
 
     cell_links = links_for(table, field)
@@ -199,7 +210,7 @@ async def related_rows(
             'target': link.target,
             'target_field': link.target_field,
             'label': link.label,
-            'columns': TABLE_COLUMNS[link.target],
+            'columns': columns_for(link.target),
             'rows': rows,
             'row_count': len(rows),
             'links': expandable_fields(link.target),
@@ -225,8 +236,73 @@ async def single_row(
     rows = await _query_rows(session, table, where_field=pk, where_value=row_id, limit=1)
     if not rows:
         raise HTTPException(status_code=404, detail='row not found')
-    return {'table': table, 'columns': TABLE_COLUMNS[table], 'row': rows[0],
+    return {'table': table, 'columns': columns_for(table), 'row': rows[0],
             'links': expandable_fields(table)}
+
+
+@router.get('/otel/{otel_trace_id}')
+async def otel_trace_detail(
+    otel_trace_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """OpenTelemetry trace summary for the popover.
+
+    The collector only has a `debug` exporter (no Jaeger/Tempo UI), but we
+    persist every span ourselves in `trace_events`, so we reconstruct the
+    span timeline from our own data and link back to the full decision-trace
+    viewer at /traces/{trace_ref}.
+    """
+    _require_admin(user)
+    trace = (await session.execute(
+        text("""
+            SELECT id, trace_ref, otel_trace_id, detected_intent, final_status,
+                   llm_provider, llm_model, total_latency_ms, llm_latency_ms,
+                   tool_latency_ms, total_tokens, estimated_cost_usd, created_at
+            FROM agent_traces
+            WHERE otel_trace_id = :otel
+            ORDER BY created_at DESC
+            LIMIT 1
+        """),
+        {'otel': otel_trace_id},
+    )).mappings().first()
+    if trace is None:
+        raise HTTPException(status_code=404, detail='no trace with that otel id')
+
+    spans = (await session.execute(
+        text("""
+            SELECT event_type, event_name, status, latency_ms, created_at
+            FROM trace_events
+            WHERE trace_id = :tid
+            ORDER BY created_at ASC
+        """),
+        {'tid': trace['id']},
+    )).mappings().all()
+
+    return {
+        'otel_trace_id': otel_trace_id,
+        'trace_ref': trace['trace_ref'],
+        'detected_intent': trace['detected_intent'],
+        'final_status': trace['final_status'],
+        'llm_provider': trace['llm_provider'],
+        'llm_model': trace['llm_model'],
+        'total_latency_ms': trace['total_latency_ms'],
+        'llm_latency_ms': trace['llm_latency_ms'],
+        'tool_latency_ms': trace['tool_latency_ms'],
+        'total_tokens': trace['total_tokens'],
+        'estimated_cost_usd': _serialise(trace['estimated_cost_usd']),
+        'created_at': _serialise(trace['created_at']),
+        'spans': [
+            {
+                'event_type': s['event_type'],
+                'event_name': s['event_name'],
+                'status': s['status'],
+                'latency_ms': s['latency_ms'],
+                'at': _serialise(s['created_at']),
+            }
+            for s in spans
+        ],
+    }
 
 
 # ─── WebSocket: realtime push of (table, op, id) events ─────────────────────

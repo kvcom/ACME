@@ -244,6 +244,21 @@ async def get_trace_id_by_ref(session: AsyncSession, trace_ref: str) -> uuid.UUI
     )).scalar()
 
 
+async def update_trace_outcome(
+    session: AsyncSession,
+    *,
+    trace_ref: str,
+    final_status: str,
+) -> None:
+    if not trace_ref:
+        return
+    await session.execute(text("""
+        UPDATE agent_traces
+        SET final_status = :final_status
+        WHERE trace_ref = :trace_ref
+    """), {'trace_ref': trace_ref, 'final_status': final_status})
+
+
 async def insert_tool_call_log(
     session: AsyncSession,
     *,
@@ -479,6 +494,7 @@ async def get_conversation_history(session: AsyncSession, conversation_ref: str)
         plan_steps = _events_to_plan_steps(event_dicts)
         choice_kind, choice_options = _events_to_pending_choices(event_dicts, r[4])
         evidence = _events_to_evidence(event_dicts)
+        action_outcome = _events_to_action_outcome(event_dicts)
         out.append({
             'user_query': r[1],
             'answer': r[2] or '',
@@ -495,6 +511,7 @@ async def get_conversation_history(session: AsyncSession, conversation_ref: str)
             'evidence': evidence,
             'choice_kind': choice_kind,
             'choice_options': choice_options,
+            'action_outcome': action_outcome,
         })
     return out
 
@@ -547,6 +564,26 @@ def _events_to_evidence(events: list[dict[str, Any]]) -> list[str]:
             if evidence:
                 return evidence
     return []
+
+
+def _events_to_action_outcome(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for ev in reversed(events):
+        payload = ev.get('payload') or {}
+        if ev.get('event_type') == 'action_confirmed':
+            action_ref = payload.get('action_ref') or payload.get('existing_action_ref')
+            return {
+                'status': 'created',
+                'title': 'Existing action' if payload.get('duplicate') else 'Action created',
+                'action_ref': action_ref,
+                'table': 'next_actions',
+            }
+        if ev.get('event_type') == 'action_cancelled':
+            return {
+                'status': 'cancelled',
+                'title': 'Cancelled',
+                'message': 'No action created. The proposal was cancelled.',
+            }
+    return None
 
 
 def _events_to_pending_choices(

@@ -190,28 +190,22 @@
     if (el) el.remove();
   }
 
-  // Type out the answer character-by-character with a blinking caret.
+  // Type out the answer character-by-character. The plan card already shows
+  // composing state, so avoid an inline caret that can jump around markdown.
   function typewriter(el, text, speed = 12, onUpdate = null) {
     return new Promise(resolve => {
       el.textContent = '';
-      const caret = document.createElement('span');
-      caret.className = 'typing-caret';
-      el.appendChild(caret);
       let i = 0;
       function step() {
         if (i >= text.length) {
-          caret.remove();
           return resolve();
         }
         const ch = text[i++];
         const before = text.slice(0, i);
         if (onUpdate) {
-          onUpdate(before, caret);
+          onUpdate(before);
         } else {
-          // Insert text node before caret so caret stays at the end.
-          caret.previousSibling
-            ? (caret.previousSibling.nodeValue = before)
-            : el.insertBefore(document.createTextNode(before), caret);
+          el.textContent = before;
         }
         // Briefly pause on sentence punctuation for a more natural cadence.
         const delay = /[.!?]/.test(ch) ? speed * 8
@@ -387,9 +381,8 @@
     const wrap = document.createElement('div');
     wrap.className = 'md-answer';
     answerRegion.appendChild(wrap);
-    await typewriter(wrap, r.answer || '', 12, (partial, caret) => {
+    await typewriter(wrap, r.answer || '', 12, partial => {
       wrap.innerHTML = renderMarkdown(partial);
-      wrap.appendChild(caret);
       followThread();
     });
     // Final render without the caret, using the complete normalised markdown.
@@ -461,9 +454,18 @@
       pop = document.createElement('div');
       pop.className = 'evidence-popover';
       pop.dataset.role = 'evidence-popover';
+      pop.addEventListener('mouseenter', () => {
+        if (evidencePopoverTimer) clearTimeout(evidencePopoverTimer);
+      });
+      pop.addEventListener('mouseleave', scheduleEvidencePopoverHide);
       document.body.appendChild(pop);
     }
     return pop;
+  }
+
+  function scheduleEvidencePopoverHide() {
+    if (evidencePopoverTimer) clearTimeout(evidencePopoverTimer);
+    evidencePopoverTimer = setTimeout(hideEvidencePopover, 140);
   }
 
   function hideEvidencePopover() {
@@ -496,11 +498,13 @@
     const spaceRight = window.innerWidth - rect.right - 24;
     const width = Math.max(340, Math.min(preferred, Math.max(spaceLeft, spaceRight)));
     const openLeft = spaceLeft >= spaceRight;
+    const gap = 6;
     const left = openLeft
-      ? Math.max(12, rect.left - width - 12)
-      : Math.min(window.innerWidth - width - 12, rect.right + 12);
-    const maxHeight = Math.max(260, window.innerHeight - 48);
-    const top = Math.max(12, Math.min(window.innerHeight - maxHeight - 12, rect.top - 12));
+      ? Math.max(12, rect.left - width - gap)
+      : Math.min(window.innerWidth - width - 12, rect.right + gap);
+    const maxHeight = Math.min(520, Math.max(260, window.innerHeight - 24));
+    const estimatedHeight = Math.min(maxHeight, pop.offsetHeight || 260);
+    const top = Math.max(12, Math.min(rect.top, window.innerHeight - estimatedHeight - 12));
     pop.style.width = `${width}px`;
     pop.style.maxHeight = `${maxHeight}px`;
     pop.style.left = `${left}px`;
@@ -564,9 +568,9 @@
       if (evidencePopoverTimer) clearTimeout(evidencePopoverTimer);
       evidencePopoverTimer = setTimeout(() => showEvidencePopover(itemEl), 180);
     });
-    itemEl.addEventListener('mouseleave', hideEvidencePopover);
+    itemEl.addEventListener('mouseleave', scheduleEvidencePopoverHide);
     itemEl.addEventListener('focus', () => showEvidencePopover(itemEl));
-    itemEl.addEventListener('blur', hideEvidencePopover);
+    itemEl.addEventListener('blur', scheduleEvidencePopoverHide);
   }
 
   function ensureEvidencePanel() {
@@ -598,6 +602,10 @@
     const list = panel.querySelector('[data-role="ev-list"]');
     const key = meta.traceRef || `local-${++evidenceGroupCounter}`;
     let group = list.querySelector(`[data-role="ev-group"][data-key="${CSS.escape(key)}"]`);
+    const existingItems = group
+      ? [...group.querySelectorAll('[data-evidence-ref]')].map(el => el.dataset.evidenceRef).filter(Boolean)
+      : [];
+    const mergedItems = [...new Set([...existingItems, ...items.map(item => String(item || ''))])].filter(Boolean);
     if (!group) {
       group = document.createElement('div');
       group.dataset.role = 'ev-group';
@@ -614,7 +622,7 @@
       group.addEventListener('focus', () => highlightResponse(group.dataset.traceRef, true, true));
       group.addEventListener('blur', () => highlightResponse(group.dataset.traceRef, false));
     }
-    group.dataset.count = String(items.length);
+    group.dataset.count = String(mergedItems.length);
     const trace = meta.traceRef
       ? `<a href="/traces/${encodeURIComponent(meta.traceRef)}">${escape(meta.traceRef)}</a>`
       : '<span class="dim">unsaved</span>';
@@ -625,7 +633,7 @@
       </div>
       <div data-role="ev-items"></div>`;
     const itemList = group.querySelector('[data-role="ev-items"]');
-    items.slice(0, 20).forEach(item => {
+    mergedItems.slice(0, 20).forEach(item => {
       const {kind, id} = evidenceParts(item);
       const li = document.createElement('div');
       li.className = 'ev-item';
@@ -1081,7 +1089,9 @@
     const actionRef = data.action_ref || data.existing_action_ref || '';
     const ok = resp.ok && (data.created || data.duplicate);
     const cards = document.querySelectorAll(`[data-role="action-card"][data-token="${CSS.escape(token)}"]`);
+    const traceRef = cards[0]?.closest('.msg-bot')?.dataset.traceRef || '';
     cards.forEach(card => {
+      const metaBadge = card.closest('.msg-body-bot')?.querySelector('.trace-meta .badge');
       const result = document.createElement('div');
       result.className = `action-result ${ok ? 'created' : 'denied'}`;
       result.innerHTML = ok ? `
@@ -1094,9 +1104,17 @@
         <p>${escape(data.detail || data.reason || 'The action was not created.')}</p>
       `;
       card.replaceWith(result);
+      if (ok && metaBadge) {
+        metaBadge.className = 'badge badge-created';
+        metaBadge.textContent = 'Action Created';
+      }
     });
     if (ok && actionRef) {
-      addEvidenceGroup([`action:${actionRef}`], {label: data.duplicate ? 'Existing action' : 'Created action', focus: true});
+      addEvidenceGroup([`action:${actionRef}`], {
+        label: 'Latest response',
+        traceRef,
+        focus: true,
+      });
     }
   }
 
@@ -1115,6 +1133,11 @@
           <p>The proposal was cancelled and will not return after refresh.</p>
         `;
         card.replaceWith(result);
+        const metaBadge = result.closest('.msg-body-bot')?.querySelector('.trace-meta .badge');
+        if (metaBadge) {
+          metaBadge.className = 'badge badge-cancelled';
+          metaBadge.textContent = 'Action Cancelled';
+        }
       });
     }
     clearRail({keepEvidence: true});

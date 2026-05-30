@@ -45,7 +45,16 @@
     .grid-wrap {
       flex: 1 1 auto; overflow: auto; min-height: 0;
       padding-bottom: 60px;
+      /* Trailing right space so the last column of a scrolled-wide table
+         isn't clipped flush against the container edge. */
+      padding-right: 48px;
     }
+    /* Give the last cell in any row internal right padding too, so its
+       text/ellipsis has breathing room before the column boundary. */
+    .gtbl td:last-child, .gtbl th:last-child { padding-right: 28px; }
+    /* Nested banner needs its own trailing space because its content sits
+       inside the host cell, not directly in .grid-wrap's padding box. */
+    .nested { padding-right: 32px; }
     .main-header h1 {
       font-family: var(--font-mono); font-size: 18px; font-weight: 500;
       color: var(--text-primary); margin: 0;
@@ -59,7 +68,20 @@
     }
 
     /* Tables */
-    .gtbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 11px; }
+    /* Root table: min-width:100% fills the panel; width:max-content lets it
+       grow past the panel (→ horizontal scroll) when it has many columns. */
+    .gtbl { min-width: 100%; width: max-content; border-collapse: separate; border-spacing: 0; font-size: 11px; }
+    /* Nested drill-down tables get their OWN horizontal scroll container so a
+       wide child (e.g. agent_traces' 22 cols) scrolls *within itself* and
+       never stretches the parent/root table. A scroll container's min-content
+       width is ~0, so the host cell isn't forced to grow — the root stays at
+       its own natural width. The table inside is width:max-content, so a
+       small child (5 cols) still renders compact (left-aligned, narrow),
+       while a wide one overflows into this box's scrollbar. */
+    .nested .nested-group-tbl-wrap {
+      display: block; overflow-x: auto; overflow-y: hidden; max-width: 100%;
+    }
+    .nested .gtbl { min-width: 0; width: max-content; }
     .gtbl th {
       text-align: left; font-family: var(--font-ui); font-size: 9px; font-weight: 500;
       letter-spacing: 0.10em; text-transform: uppercase; color: var(--text-muted);
@@ -80,9 +102,21 @@
     .gtbl td .cell { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
     .gtbl td.wrap { white-space: normal; }
     .gtbl tr.parent-row > td { background: rgba(217,119,87,0.03); }
-    .gtbl tr.nested-host > td { padding: 0; background: var(--bg-base); }
+    /* The host cell carries the entire nested drill-down. It is a CLIPPING
+       container (overflow:hidden): as a scroll container its intrinsic width
+       ignores the (possibly very wide) nested content, so it contributes ~0
+       to the root table's max-content sizing — the root therefore stays at
+       its own natural width and never stretches to fit a wide child. The
+       child's own scrollbar comes from `.nested .nested-group-tbl-wrap`
+       (overflow-x:auto) nested inside. max-width:none stops the 320px cell
+       clamp from squeezing the banner. */
+    .gtbl tr.nested-host > td {
+      padding: 0; background: var(--bg-base);
+      max-width: none; overflow: hidden; white-space: normal;
+    }
 
     .cell { display: inline-flex; align-items: center; gap: 6px; }
+    /* OTel popover styles are shared in app.css (used here + on /traces). */
     .expand-btn {
       display: inline-flex; align-items: center; justify-content: center;
       width: 16px; height: 16px; border-radius: 3px;
@@ -133,12 +167,13 @@
       padding: 8px; color: var(--text-dim); font-size: 11px; font-style: italic;
       font-family: var(--font-ui);
     }
-    /* Don't make this an inner scroll container — that breaks position:sticky
-       on the root table's header. Horizontal overflow is fine to fall through
-       to .main, which is the real scroll container for the page. */
-    .nested-group .nested-group-tbl-wrap { overflow: visible; }
+    /* (Nested wrap overflow is set above on `.nested .nested-group-tbl-wrap`
+       — it's an independent horizontal scroll container so wide children
+       don't stretch the root. The root table's own wrap is never inside
+       `.nested`, so its sticky header is unaffected.) */
     .truncated { color: var(--text-dim); font-style: italic; }
     .uuid { color: var(--text-dim); }
+    .datetime { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
     .null { color: var(--text-dim); font-style: italic; }
     .bool-true { color: var(--color-grounded-dim); }
     .bool-false { color: var(--color-denied-dim); }
@@ -244,6 +279,7 @@
       </div>
     </main>
   </div>
+  <script src="/static/otel-popover.js"></script>
 </div>
 
 <script>
@@ -290,6 +326,16 @@
   }
 
   // ─── Rendering helpers ───────────────────────────────────────────────────
+  // ISO-8601 datetime with optional fractional seconds and timezone.
+  // Postgres TIMESTAMPTZ serialises as `2026-05-30T18:57:32.614336+00:00`.
+  const ISO_DT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:?\d{2}|Z)?$/;
+  function prettyDatetime(s) {
+    // Replace the "T" with a space, drop microseconds and the timezone
+    // suffix. Yields "2026-05-30 18:57:32" — scannable at a glance, while
+    // td.title still carries the full original value for a tooltip.
+    return s.replace('T', ' ').replace(/\.\d+/, '').replace(/([+-]\d{2}:?\d{2}|Z)$/, '');
+  }
+
   function rawString(value) {
     if (value === null || value === undefined) return '';
     if (typeof value === 'object') return JSON.stringify(value);
@@ -305,6 +351,9 @@
       return s.length > 80 ? `<span class="truncated">${escapeHtml(s.slice(0, 78))}…</span>` : escapeHtml(s);
     }
     const s = String(value);
+    if (ISO_DT_RE.test(s)) {
+      return `<span class="datetime">${escapeHtml(prettyDatetime(s))}</span>`;
+    }
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) {
       return `<span class="uuid">${escapeHtml(s.slice(0, 8))}…</span>`;
     }
@@ -313,6 +362,15 @@
   }
   function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function escapeAttr(s) { return escapeHtml(s); }
+
+  // Trace-telescope button rendered next to an otel_trace_id value. Opens a
+  // popover with the reconstructed OpenTelemetry span timeline + a link to
+  // the full decision-trace viewer.
+  function otelButton(column, val) {
+    if (column !== 'otel_trace_id' || val == null || val === '') return '';
+    const v = escapeAttr(String(val));
+    return `<button class="otel-btn" data-otel="${v}" data-otel-url="/db-explorer/otel/${encodeURIComponent(val)}" title="View OpenTelemetry trace timeline">⌕</button>`;
+  }
 
   function renderTable(table, columns, rows, links, ancestors, filter) {
     const ancestorSet = new Set(ancestors || []);
@@ -389,7 +447,7 @@
           fieldLinks.length && val != null
             ? `<button class="expand-btn" data-table="${table}" data-field="${c}" data-value="${escapeAttr(String(val))}" title="${escapeAttr(fieldLinks.map(l => l.label).join(' · '))}">+</button>`
             : ''
-        ) + `</span>`;
+        ) + otelButton(c, val) + `</span>`;
         tr.appendChild(td);
       }
       tbody.appendChild(tr);
@@ -408,6 +466,40 @@
     if (!wrap || !wrap.dataset.ancestors) return [];
     return wrap.dataset.ancestors.split(',').filter(Boolean);
   }
+
+  // Bound a nested table's scroll container (.nested-group-tbl-wrap) to the
+  // VISIBLE viewport width. This does two jobs at once:
+  //   1. The wrap is overflow-x:auto, so a wide child scrolls WITHIN it
+  //      (the scrollbar appears).
+  //   2. Because the wrap is a fixed-width scroll container, it can't be
+  //      content-sized, so it never forces the host cell — hence the root
+  //      table — to grow. The root keeps its own natural width.
+  // Called at the moment a group is EXPANDED (so the element is laid out),
+  // not at banner-creation (groups start collapsed = display:none).
+  // Collapsing to 0 first un-stretches the grid so the left-edge measurement
+  // is taken at the wrap's true indent position.
+  function boundWrapWidth(wrapEl) {
+    const gridWrap = document.querySelector('.grid-wrap');
+    if (!gridWrap || !wrapEl) return;
+    wrapEl.style.maxWidth = '0px';
+    void gridWrap.offsetWidth;  // force reflow so the grid un-stretches
+    const gwRect = gridWrap.getBoundingClientRect();
+    const wRect = wrapEl.getBoundingClientRect();
+    const visibleRight = gwRect.left + gridWrap.clientWidth;
+    const avail = Math.max(280, Math.floor(visibleRight - wRect.left - 16));
+    wrapEl.style.maxWidth = avail + 'px';
+  }
+
+  // Re-bound every OPEN nested table on window resize so panels keep tracking
+  // the viewport width.
+  let _resizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(_resizeTimer);
+    _resizeTimer = setTimeout(() => {
+      document.querySelectorAll('#root-grid .nested-group.is-open > .group-body > .nested-group-tbl-wrap')
+        .forEach(boundWrapWidth);
+    }, 120);
+  });
 
   // Delegated click for all "+" buttons inside #root-grid.
   document.getElementById('root-grid').addEventListener('click', async (e) => {
@@ -496,6 +588,13 @@
         h.addEventListener('click', () => {
           const open = g.classList.toggle('is-open');
           h.querySelector('.toggle').textContent = open ? '−' : '+';
+          if (open) {
+            // Bound the now-visible table's scroll container to the viewport:
+            // gives it its own horizontal scrollbar AND stops it stretching
+            // the root table.
+            const w = g.querySelector(':scope > .group-body > .nested-group-tbl-wrap');
+            if (w) boundWrapWidth(w);
+          }
         });
         wrap.appendChild(g);
       }
@@ -504,6 +603,9 @@
       td.innerHTML = `<div class="err">Failed to load related rows: ${escapeHtml(err.message)}</div>`;
     }
   });
+
+  // OpenTelemetry trace popover is handled by the shared /static/otel-popover.js
+  // (delegated on .otel-btn). Nothing to wire here.
 
   // ─── Realtime WebSocket (D-018) ──────────────────────────────────────────
   // Single WS receives all DB change events. Locally we:
@@ -537,7 +639,7 @@
         fieldLinks.length && val != null
           ? `<button class="expand-btn" data-table="${table}" data-field="${c}" data-value="${escapeAttr(String(val))}" title="${escapeAttr(fieldLinks.map(l => l.label).join(' · '))}">+</button>`
           : ''
-      ) + `</span>`;
+      ) + otelButton(c, val) + `</span>`;
       tr.appendChild(td);
     }
     return tr;

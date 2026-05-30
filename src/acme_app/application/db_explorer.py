@@ -33,8 +33,12 @@ class Link:
     label: str            # short human label rendered in the UI
 
 
-# Display column order per table — first three are treated as primary columns
-# the UI will show by default; the rest are revealed in expanded view.
+# Column ORDER HINT per table (not an allow-list of which columns to show).
+# The explorer displays EVERY real column the table has — see
+# `resolve_columns()`. Columns named here appear first, in this order, so the
+# meaningful fields lead and the UUID/FK columns trail; any column NOT named
+# here (e.g. a freshly-added one, or fields like user_query we didn't bother
+# to order) is appended after, so nothing is ever hidden.
 TABLE_COLUMNS: dict[str, list[str]] = {
     'users': [
         'username', 'display_name', 'email', 'is_active', 'keycloak_subject',
@@ -277,3 +281,74 @@ def expandable_fields(table: str) -> dict[str, list[dict[str, str]]]:
 
 def is_table_allowed(table: str) -> bool:
     return table in EXPLORER_TABLES
+
+
+# ── Live column resolution ───────────────────────────────────────────────────
+# The explorer shows EVERY column a table actually has, introspected from
+# `information_schema.columns`. This guarantees the UI can never silently drift
+# from the schema (the previous hand-curated lists were missing columns like
+# agent_traces.user_query). TABLE_COLUMNS above is now only an ordering hint.
+#
+# Result is cached process-wide with a short TTL so a column added by a live
+# migration appears within ~30 s without a restart, while we don't hit
+# information_schema on every request.
+
+import time  # noqa: E402 — kept local to this feature block
+
+_LIVE_COLUMNS: dict[str, list[str]] = {}
+_LIVE_COLUMNS_AT: float = 0.0
+_LIVE_COLUMNS_TTL = 30.0
+
+
+def _merge_order(table: str, real_cols: list[str]) -> list[str]:
+    """Hint columns first (in hint order, if they exist), then the rest of the
+    real columns in their natural ordinal order."""
+    hint = TABLE_COLUMNS.get(table, [])
+    ordered = [c for c in hint if c in real_cols]
+    ordered += [c for c in real_cols if c not in hint]
+    return ordered or list(real_cols)
+
+
+async def resolve_columns(force: bool = False) -> dict[str, list[str]]:
+    """Introspect and cache the real column list for every explorer table."""
+    global _LIVE_COLUMNS, _LIVE_COLUMNS_AT
+    now = time.time()
+    if not force and _LIVE_COLUMNS and (now - _LIVE_COLUMNS_AT) < _LIVE_COLUMNS_TTL:
+        return _LIVE_COLUMNS
+
+    # Lazy import to keep this module import-safe before the DB layer is set up.
+    from sqlalchemy import text
+    from acme_app.infrastructure.db.session import AsyncSessionLocal
+
+    try:
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(
+                text("""
+                    SELECT table_name, column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = ANY(:tables)
+                    ORDER BY table_name, ordinal_position
+                """),
+                {'tables': EXPLORER_TABLES},
+            )).all()
+    except Exception:
+        # On failure keep what we had; if nothing yet, fall back to the hints
+        # so the explorer still works (just possibly missing new columns).
+        if not _LIVE_COLUMNS:
+            _LIVE_COLUMNS = {t: list(cols) for t, cols in TABLE_COLUMNS.items()}
+            _LIVE_COLUMNS_AT = now
+        return _LIVE_COLUMNS
+
+    real: dict[str, list[str]] = {}
+    for table_name, column_name in rows:
+        real.setdefault(table_name, []).append(column_name)
+    _LIVE_COLUMNS = {t: _merge_order(t, real.get(t, [])) for t in EXPLORER_TABLES}
+    _LIVE_COLUMNS_AT = now
+    return _LIVE_COLUMNS
+
+
+def columns_for(table: str) -> list[str]:
+    """Sync accessor for the last-resolved column list. Callers must have
+    awaited resolve_columns() earlier in the same request. Falls back to the
+    hint (or, ultimately, an empty list) when the cache is cold."""
+    return _LIVE_COLUMNS.get(table) or list(TABLE_COLUMNS.get(table, []))

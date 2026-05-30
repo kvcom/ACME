@@ -319,6 +319,18 @@
                data-original-query="{{ turn.user_query }}"
                data-options="{{ turn.choice_options | tojson | forceescape }}"></div>
           {% endif %}
+          {% if turn.action_outcome %}
+          <div class="action-result {{ turn.action_outcome.status }}">
+            <div class="label">{{ turn.action_outcome.title }}</div>
+            {% if turn.action_outcome.status == 'created' %}
+            <div class="action-result-title">{{ turn.action_outcome.action_ref }}</div>
+            <p>Saved in <code>{{ turn.action_outcome.table }}</code>. The action row has been added to Evidence.</p>
+            {% else %}
+            <div class="action-result-title">No action created</div>
+            <p>{{ turn.action_outcome.message }}</p>
+            {% endif %}
+          </div>
+          {% endif %}
           <div class="trace-meta">
             <span class="badge badge-{{ turn.badge_class }}">{{ turn.badge }}</span>
             <span class="sep">·</span>

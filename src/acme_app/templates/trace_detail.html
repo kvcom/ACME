@@ -187,7 +187,7 @@
           <span class="k">User</span>     <span class="v">{{ trace.username }} · {{ trace.role }}</span>
           <span class="k">Intent</span>   <span class="v">{{ trace.detected_intent or '—' }}</span>
           <span class="k">Provider</span> <span class="v">{{ trace.provider }} · {{ trace.model }}</span>
-          <span class="k">OTel</span>     <span class="v dim">{{ (trace.otel_trace_id or '—')[:12] }}</span>
+          <span class="k">OTel</span>     <span class="v dim">{{ (trace.otel_trace_id or '—')[:12] }}{% if trace.otel_trace_id %}<button class="otel-btn" style="margin-left:6px;" data-otel="{{ trace.otel_trace_id }}" data-otel-url="/traces/{{ trace.trace_ref }}/otel" title="View OpenTelemetry trace timeline">⌕</button>{% endif %}</span>
         </div>
       </div>
 
@@ -207,9 +207,9 @@
         <div class="kv" style="grid-template-columns: 1fr;">
           {% for item in trace.evidence %}
           {% set parts = item.split(':', 1) %}
-          <div class="ev-item" style="padding-left:0; padding-right:0;">
+          <div class="ev-item" tabindex="0" data-evidence-ref="{{ item }}">
             <span class="ref">{{ parts[1] if parts|length == 2 else item }}</span>
-            <span class="desc">{{ parts[0] if parts|length == 2 else 'record' }}</span>
+            <span class="desc">{{ 'issue update' if parts|length == 2 and parts[0] == 'update' else (parts[0] if parts|length == 2 else 'record') }}</span>
           </div>
           {% endfor %}
         </div>
@@ -324,6 +324,143 @@
     latency: {{ trace.total_latency_ms or 0 }},
     finalAnswer: {{ (trace.final_answer or '—') | tojson }},
   };
+  const evidenceRecordCache = new Map();
+  let evidencePopoverTimer = null;
+
+  function traceEscapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    }[c]));
+  }
+
+  function ensureEvidencePopover() {
+    let pop = document.querySelector('[data-role="evidence-popover"]');
+    if (!pop) {
+      pop = document.createElement('div');
+      pop.className = 'evidence-popover';
+      pop.dataset.role = 'evidence-popover';
+      pop.addEventListener('mouseenter', () => {
+        if (evidencePopoverTimer) clearTimeout(evidencePopoverTimer);
+      });
+      pop.addEventListener('mouseleave', scheduleEvidencePopoverHide);
+      document.body.appendChild(pop);
+    }
+    return pop;
+  }
+
+  function scheduleEvidencePopoverHide() {
+    if (evidencePopoverTimer) clearTimeout(evidencePopoverTimer);
+    evidencePopoverTimer = setTimeout(hideEvidencePopover, 140);
+  }
+
+  function hideEvidencePopover() {
+    if (evidencePopoverTimer) {
+      clearTimeout(evidencePopoverTimer);
+      evidencePopoverTimer = null;
+    }
+    const pop = document.querySelector('[data-role="evidence-popover"]');
+    if (pop) pop.classList.remove('open');
+  }
+
+  function idealEvidencePopoverWidth(data = null) {
+    const record = data?.record || {};
+    const values = Object.values(record).map(value => (
+      value === null || value === undefined ? '' :
+      typeof value === 'object' ? JSON.stringify(value) : String(value)
+    ));
+    const longest = values.reduce((max, value) => Math.max(max, value.length), 0);
+    const fields = values.length;
+    if (longest > 120) return 660;
+    if (longest > 72 || fields > 12) return 560;
+    if (longest > 44 || fields > 8) return 480;
+    return 400;
+  }
+
+  function positionEvidencePopover(pop, anchor, data = null) {
+    const rect = anchor.getBoundingClientRect();
+    const preferred = idealEvidencePopoverWidth(data);
+    const spaceLeft = rect.left - 24;
+    const spaceRight = window.innerWidth - rect.right - 24;
+    const width = Math.max(340, Math.min(preferred, Math.max(spaceLeft, spaceRight)));
+    const openLeft = spaceLeft >= spaceRight;
+    const gap = 6;
+    const left = openLeft
+      ? Math.max(12, rect.left - width - gap)
+      : Math.min(window.innerWidth - width - 12, rect.right + gap);
+    const maxHeight = Math.min(520, Math.max(260, window.innerHeight - 24));
+    const estimatedHeight = Math.min(maxHeight, pop.offsetHeight || 260);
+    const top = Math.max(12, Math.min(rect.top, window.innerHeight - estimatedHeight - 12));
+    pop.style.width = `${width}px`;
+    pop.style.maxHeight = `${maxHeight}px`;
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+  }
+
+  function renderEvidenceRecord(record) {
+    const rows = Object.entries(record || {}).map(([key, value]) => {
+      const text = value === null || value === undefined ? 'NULL'
+        : typeof value === 'object' ? JSON.stringify(value)
+        : String(value);
+      return `<div class="evidence-popover-row">
+        <span class="k">${traceEscapeHtml(key)}</span>
+        <span class="v">${traceEscapeHtml(text)}</span>
+      </div>`;
+    }).join('');
+    return rows || '<div class="dim">No fields returned.</div>';
+  }
+
+  async function showEvidencePopover(anchor) {
+    const evidence = anchor.dataset.evidenceRef;
+    if (!evidence) return;
+    const pop = ensureEvidencePopover();
+    positionEvidencePopover(pop, anchor);
+    pop.innerHTML = `
+      <div class="evidence-popover-head">
+        <span class="label">Evidence record</span>
+        <span class="mono dim">${traceEscapeHtml(evidence)}</span>
+      </div>
+      <div class="evidence-popover-body"><span class="dim">Loading...</span></div>`;
+    pop.classList.add('open');
+
+    try {
+      let data = evidenceRecordCache.get(evidence);
+      if (!data) {
+        const resp = await fetch(`/evidence/record?evidence=${encodeURIComponent(evidence)}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        data = await resp.json();
+        evidenceRecordCache.set(evidence, data);
+      }
+      pop.innerHTML = `
+        <div class="evidence-popover-head">
+          <span class="label">${traceEscapeHtml(data.table || 'Record')}</span>
+          <span class="mono dim">${traceEscapeHtml(data.evidence || evidence)}</span>
+        </div>
+        <div class="evidence-popover-body">${renderEvidenceRecord(data.record)}</div>`;
+      positionEvidencePopover(pop, anchor, data);
+    } catch (e) {
+      pop.innerHTML = `
+        <div class="evidence-popover-head">
+          <span class="label">Evidence record</span>
+          <span class="mono dim">${traceEscapeHtml(evidence)}</span>
+        </div>
+        <div class="evidence-popover-body"><span class="dim">Record not available.</span></div>`;
+    }
+  }
+
+  function bindEvidenceItemPopover(itemEl) {
+    itemEl.addEventListener('mouseenter', () => {
+      if (evidencePopoverTimer) clearTimeout(evidencePopoverTimer);
+      evidencePopoverTimer = setTimeout(() => showEvidencePopover(itemEl), 180);
+    });
+    itemEl.addEventListener('mouseleave', scheduleEvidencePopoverHide);
+    itemEl.addEventListener('focus', () => showEvidencePopover(itemEl));
+    itemEl.addEventListener('blur', scheduleEvidencePopoverHide);
+  }
+
   function eventMetrics(ev) {
     const payload = ev.payload || {};
     const eventTokens = payload.total_tokens ?? null;
@@ -363,6 +500,8 @@
   if (nodes.length) {
     selectNode(nodes[nodes.length - 1], nodes.length - 1);
   }
+  document.querySelectorAll('[data-evidence-ref]').forEach(bindEvidenceItemPopover);
 </script>
+<script src="/static/otel-popover.js"></script>
 </body>
 </html>

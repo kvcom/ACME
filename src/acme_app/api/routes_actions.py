@@ -94,6 +94,11 @@ async def confirm_action(
                     'evidence': evidence,
                 },
             )
+            await repo.update_trace_outcome(
+                session,
+                trace_ref=pending.get('trace_ref', ''),
+                final_status='Action Created',
+            )
         await clear_pending_action(payload.conversation_ref)
     return result
 
@@ -120,6 +125,11 @@ async def cancel_action(
                     'idempotency_key': pending.get('idempotency_key'),
                     'reason': 'user_cancelled',
                 },
+            )
+            await repo.update_trace_outcome(
+                session,
+                trace_ref=pending.get('trace_ref', ''),
+                final_status='Action Cancelled',
             )
     await clear_pending_action(payload.conversation_ref)
     return {'cancelled': True}
