@@ -232,8 +232,10 @@ LINKS: dict[tuple[str, str], list[Link]] = {
 
 
 # Tables exposed in the picker. Anything not in this list is unreachable
-# from the explorer — extra safety on top of the role gate.
-EXPLORER_TABLES: list[str] = list(TABLE_COLUMNS.keys())
+# from the explorer — extra safety on top of the role gate. Sorted so the
+# sidebar reads alphabetically regardless of how TABLE_COLUMNS is ordered
+# in the source (it's grouped by domain there for editor readability).
+EXPLORER_TABLES: list[str] = sorted(TABLE_COLUMNS.keys())
 
 
 # Default ORDER BY column per table for stable listings.
