@@ -21,11 +21,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 import asyncpg
 from fastapi import WebSocket
+
+InternalHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
 from acme_app.config import settings
 
@@ -56,8 +59,16 @@ class Broadcaster:
         self._conn: asyncpg.Connection | None = None
         self._reader_task: asyncio.Task | None = None
         self._subscribers: dict[WebSocket, Subscriber] = {}
+        # In-process post-fan-out handlers. Used for things like the
+        # action_catalogue refresh hook (D-019) that need to react to DB
+        # changes server-side, not just push them to the browser.
+        self._internal_handlers: list[InternalHandler] = []
         self._lock = asyncio.Lock()
         self._stopping = False
+
+    def on_event(self, handler: InternalHandler) -> None:
+        """Register a server-side handler called after every event fan-out."""
+        self._internal_handlers.append(handler)
 
     async def start(self) -> None:
         """Open the listener connection and spawn the reader task."""
@@ -127,6 +138,14 @@ class Broadcaster:
                 sub.queue.put_nowait(event)
             except asyncio.QueueFull:
                 _log.warning('Subscriber queue full, dropping event for socket %s', id(sub.socket))
+        # In-process handlers (action_catalogue refresh, etc.). These run
+        # after WS delivery so browser clients don't wait on slow server-side
+        # reactions. Failures are isolated per handler.
+        for handler in self._internal_handlers:
+            try:
+                await handler(event)
+            except Exception:
+                _log.exception('internal event handler failed')
 
     async def _reader_loop(self) -> None:
         """Hold a long-lived LISTEN connection and reconnect on failure."""

@@ -9,7 +9,7 @@ import time
 from typing import Any
 
 from acme_app.config import settings
-from acme_app.infrastructure.llm.providers.anthropic_provider import PLANNER_SYSTEM_PROMPT
+from acme_app.infrastructure.llm.providers.anthropic_provider import planner_system_prompt
 from acme_app.infrastructure.llm.providers.base import LLMProvider, LLMResponse
 
 
@@ -29,7 +29,7 @@ class OpenAIProvider(LLMProvider):
             model=self.model,
             response_format={'type': 'json_object'},
             messages=[
-                {'role': 'system', 'content': PLANNER_SYSTEM_PROMPT + '\n' + system_prompt},
+                {'role': 'system', 'content': planner_system_prompt() + '\n' + system_prompt},
                 {'role': 'user', 'content': user_prompt},
             ],
         )

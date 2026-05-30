@@ -108,6 +108,37 @@ Respond with JSON only matching this schema:
 Produce no prose outside the JSON object."""
 
 
+def planner_system_prompt() -> str:
+    """Return the planner system prompt augmented with the LIVE list of
+    registered action types from `action_catalogue` (D-019).
+
+    Action types are not invented by the LLM at the plan step — they get
+    chosen by deterministic skills downstream — but including the live
+    list in the prompt:
+      (a) anchors the "Never invent action_types" rule with an explicit
+          allow-list rather than the LLM's training-time prior, and
+      (b) gives the model future-proofing: if an operator adds a new
+          action type via the DB Explorer, the next planner turn already
+          knows about it without a deploy.
+    """
+    # Lazy import to avoid the providers package importing the policy
+    # package at module-load time (circular import risk).
+    from acme_app.policy import action_catalogue
+    defs = action_catalogue.snapshot()
+    if not defs:
+        return PLANNER_SYSTEM_PROMPT
+    lines = []
+    for defn in sorted(defs.values(), key=lambda d: d.action_type):
+        roles = ', '.join(defn.allowed_roles)
+        lines.append(f'  {defn.action_type:24s}  ({defn.side_effect_level:6s})  allowed: {roles}')
+    catalogue_block = (
+        '\n\nRegistered action types (loaded live from action_catalogue) — '
+        'the agent may only propose writes whose action_type is in this list:\n'
+        + '\n'.join(lines)
+    )
+    return PLANNER_SYSTEM_PROMPT + catalogue_block
+
+
 def _parse_json_object(text: str) -> dict[str, Any]:
     """Parse provider JSON, tolerating fenced JSON blocks."""
     candidate = text.strip()
@@ -136,7 +167,7 @@ class AnthropicProvider(LLMProvider):
         resp = await self._client.messages.create(
             model=self.model,
             max_tokens=1024,
-            system=PLANNER_SYSTEM_PROMPT + '\n' + system_prompt,
+            system=planner_system_prompt() + '\n' + system_prompt,
             messages=[{'role': 'user', 'content': user_prompt}],
         )
         elapsed = int((time.perf_counter() - start) * 1000)

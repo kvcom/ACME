@@ -187,6 +187,14 @@
       100% { background: transparent; }
     }
     .gtbl tr.row-flash > td { animation: rowflash 1.6s ease-out; }
+    /* Deletion uses a red flash + collapse to zero height so the user
+       sees the row disappearing rather than vanishing in one frame. */
+    @keyframes rowfade {
+      0%   { background: rgba(217, 95, 95, 0.32); opacity: 1; }
+      70%  { background: rgba(217, 95, 95, 0.10); opacity: 0.6; }
+      100% { background: transparent; opacity: 0; }
+    }
+    .gtbl tr.row-fade > td { animation: rowfade 0.9s ease-out forwards; }
 
     /* Nested-group count gets a brief flash when a live row arrives so
        the user can spot which collapsed group just grew. */
@@ -507,6 +515,20 @@
 
   function pkColumn(table) { return table === 'action_catalogue' ? 'action_type' : 'id'; }
 
+  // Recompute the "N rows (showing first N)" headline from the current
+  // tbody. Called after live inserts and deletes so the count tracks the
+  // DOM in real time. The "showing first" stays equal to the live count
+  // because in the streaming case we always have every row the server gave
+  // us (no virtualisation / pagination yet).
+  function refreshRootCount() {
+    const headline = document.getElementById('root-count');
+    if (!headline) return;
+    const tbody = document.querySelector('#root-grid .gtbl tbody');
+    if (!tbody) return;
+    const n = tbody.children.length;
+    headline.innerHTML = `<b>${n}</b> rows (showing first ${n})`;
+  }
+
   // Apply a single (table, op, id) event to every rendered table on the
   // page whose displayed entity matches. Each rendered table records its
   // own filter; we only insert/update rows that satisfy that filter, so:
@@ -522,6 +544,39 @@
     const candidates = Array.from(document.querySelectorAll('table.gtbl'))
       .filter(t => t.dataset.table === event.table);
     if (!candidates.length) return;
+
+    // DELETE has no row to fetch — just remove from every candidate by PK.
+    if (event.op === 'DELETE') {
+      for (const tbl of candidates) {
+        const columns = tbl.dataset.columns ? JSON.parse(tbl.dataset.columns) : null;
+        if (!columns) continue;
+        const pk = pkColumn(event.table);
+        const pkIdx = columns.indexOf(pk);
+        if (pkIdx < 0) continue;
+        const tbody = tbl.querySelector('tbody');
+        if (!tbody) continue;
+        const victim = Array.from(tbody.children).find(tr => {
+          const cell = tr.children[pkIdx];
+          return cell && cell.title === String(event.id);
+        });
+        if (!victim) continue;
+        victim.classList.add('row-fade');
+        // Decrement the nested-group count badge in lock-step with removal.
+        const group = tbl.closest('.nested-group');
+        if (group) {
+          const countEl = group.querySelector(':scope > h4 .count');
+          if (countEl) {
+            const m = countEl.textContent.match(/·\s*(\d+)/);
+            if (m) {
+              const newN = Math.max(0, parseInt(m[1], 10) - 1);
+              countEl.textContent = countEl.textContent.replace(/·\s*\d+/, `· ${newN}`);
+            }
+          }
+        }
+        setTimeout(() => { victim.remove(); refreshRootCount(); }, 950);
+      }
+      return;
+    }
 
     let payload;
     try {
@@ -560,6 +615,7 @@
 
       const newTr = buildRowTrFor(payload.table, payload.row, columns, links, ancestors);
       newTr.classList.add('row-flash');
+      const isNewRow = !existing;
       if (existing) {
         existing.replaceWith(newTr);
       } else {
@@ -582,6 +638,10 @@
         }
       }
       setTimeout(() => newTr.classList.remove('row-flash'), 1700);
+      // If we just *added* a row to the root grid (not an in-place update),
+      // bump the headline count too. Nested group counts are already
+      // handled above per group.
+      if (isNewRow && tbl.closest('#root-grid')) refreshRootCount();
     }
   }
 
@@ -629,6 +689,7 @@
       grid.innerHTML = '';
       const headline = document.createElement('div');
       headline.className = 'nested-header';
+      headline.id = 'root-count';
       headline.innerHTML = `<b>${data.row_count}</b> rows (showing first ${data.row_count})`;
       grid.appendChild(headline);
       // Root call seeds the ancestor list with just the root table and has

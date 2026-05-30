@@ -15,7 +15,7 @@ import re
 from typing import Any
 
 from acme_app.infrastructure.mcp_client.schemas import ALLOWED_TOOLS
-from acme_app.policy.action_catalogue import ALLOWED_ACTION_TYPES
+from acme_app.policy import action_catalogue
 
 
 MAX_QUERY_LENGTH = 4096
@@ -78,7 +78,7 @@ def validate_step_arguments(name: str, args: dict[str, Any]) -> tuple[bool, str]
         if isinstance(v, str) and len(v) > 200:
             return False, f'argument {k} too long'
     if name == 'create_next_action':
-        if args.get('action_type') and args['action_type'] not in ALLOWED_ACTION_TYPES:
+        if args.get('action_type') and args['action_type'] not in action_catalogue.allowed_action_types():
             return False, f'action_type not in catalogue: {args.get("action_type")}'
         return True, 'ok'
 

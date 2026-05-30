@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 
 from acme_app.config import settings
-from acme_app.infrastructure.llm.providers.anthropic_provider import PLANNER_SYSTEM_PROMPT
+from acme_app.infrastructure.llm.providers.anthropic_provider import planner_system_prompt
 from acme_app.infrastructure.llm.providers.base import LLMProvider, LLMResponse
 
 
@@ -56,7 +56,7 @@ class OllamaProvider(LLMProvider):
 
     async def plan(self, system_prompt: str, user_prompt: str, context: dict[str, Any]) -> LLMResponse:
         text, pt, ct, elapsed = await self._chat(
-            system=PLANNER_SYSTEM_PROMPT + '\n' + system_prompt,
+            system=planner_system_prompt() + '\n' + system_prompt,
             user=user_prompt,
             want_json=True,
             max_tokens=2048,

@@ -1,4 +1,4 @@
-from acme_app.policy.action_catalogue import CATALOGUE, role_allowed, validate_action_type
+from acme_app.policy.action_catalogue import allowed_action_types, role_allowed, validate_action_type
 from acme_app.policy.action_guard import (
     can_propose,
     idempotency_key,
@@ -22,7 +22,7 @@ def test_support_can_propose_most_actions():
 
 
 def test_admin_can_propose_all():
-    for action_type in CATALOGUE:
+    for action_type in allowed_action_types():
         ok, reason = can_propose('admin', action_type)
         assert ok is True, reason
 

@@ -22,7 +22,7 @@ from datetime import datetime
 from typing import Any
 
 from acme_mcp.db import get_conn
-from acme_mcp.validation import ALLOWED_ACTION_TYPES, ALLOWED_ISSUE_STATUSES, role_may_create
+from acme_mcp.validation import ALLOWED_ISSUE_STATUSES, allowed_action_types, role_may_create
 
 
 HMAC_SECRET = os.getenv('CONFIRMATION_HMAC_SECRET', 'dev-only-secret-change-me')
@@ -240,7 +240,7 @@ def create_next_action(
     idempotency_key: str,
     confirmation_token: str,
 ) -> dict[str, Any]:
-    if action_type not in ALLOWED_ACTION_TYPES:
+    if action_type not in allowed_action_types():
         return {'created': False, 'denied': True, 'reason': f'Unknown action_type: {action_type}'}
     role = actor.get('role', '')
     if not role_may_create(role, action_type):

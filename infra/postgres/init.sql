@@ -295,17 +295,24 @@ $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION notify_db_explorer() RETURNS TRIGGER AS $$
 DECLARE
+    row_data JSONB;
     row_id TEXT;
 BEGIN
-    row_id := COALESCE(
-        (row_to_json(NEW)::jsonb ->> 'id'),
-        (row_to_json(NEW)::jsonb ->> 'action_type')
-    );
+    -- Use OLD on DELETE (NEW is NULL); NEW otherwise.
+    IF TG_OP = 'DELETE' THEN
+        row_data := row_to_json(OLD)::jsonb;
+    ELSE
+        row_data := row_to_json(NEW)::jsonb;
+    END IF;
+    row_id := COALESCE(row_data ->> 'id', row_data ->> 'action_type');
     PERFORM pg_notify('db_explorer', json_build_object(
         'table', TG_TABLE_NAME,
         'op', TG_OP,
         'id', row_id
     )::text);
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -324,7 +331,7 @@ BEGIN
         EXECUTE format('DROP TRIGGER IF EXISTS notify_db_explorer_trg ON %I', t);
         EXECUTE format(
             'CREATE TRIGGER notify_db_explorer_trg
-             AFTER INSERT OR UPDATE ON %I
+             AFTER INSERT OR UPDATE OR DELETE ON %I
              FOR EACH ROW EXECUTE FUNCTION notify_db_explorer()',
             t
         );

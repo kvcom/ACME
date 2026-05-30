@@ -10,7 +10,7 @@ import time
 from typing import Any
 
 from acme_app.config import settings
-from acme_app.infrastructure.llm.providers.anthropic_provider import PLANNER_SYSTEM_PROMPT
+from acme_app.infrastructure.llm.providers.anthropic_provider import planner_system_prompt
 from acme_app.infrastructure.llm.providers.base import LLMProvider, LLMResponse
 
 
@@ -39,7 +39,7 @@ class GoogleProvider(LLMProvider):
 
     async def plan(self, system_prompt: str, user_prompt: str, context: dict[str, Any]) -> LLMResponse:
         start = time.perf_counter()
-        full_prompt = f'{PLANNER_SYSTEM_PROMPT}\n{system_prompt}\n\nUser query:\n{user_prompt}\n\nRespond with JSON only.'
+        full_prompt = f'{planner_system_prompt()}\n{system_prompt}\n\nUser query:\n{user_prompt}\n\nRespond with JSON only.'
         response = await self._client.generate_content_async(
             full_prompt,
             generation_config={

@@ -63,6 +63,14 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
+/* When the browser is narrower than the natural layout (sidebar + content +
+   rail, or wide tables), let the viewport scroll horizontally instead of
+   squishing columns into unreadable widths. The min-width is chosen to keep
+   the chat workspace (260 + content + 340) and the DB explorer table wide
+   enough to be legible. Inner containers can still use `overflow: hidden`
+   for their own clipping — that doesn't block body-level horizontal scroll. */
+html { overflow-x: auto; }
+body { min-width: 1100px; }
 body {
   font-family: var(--font-ui);
   font-size: 12px;
