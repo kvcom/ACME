@@ -257,3 +257,47 @@ B was chosen. It removes the single-source-of-truth ambiguity (with A, two syste
 - The app's `action_catalogue.handle_event` already matched on `event.get('table') == 'action_catalogue'` regardless of op, so the snapshot reload path works unchanged.
 
 **Verified**: insert→delete cycle now produces `8 → 9 → 8 active types` reloads with both `INSERT` and `DELETE` events propagated to WS clients within 2 ms. 121 pytest pass.
+
+
+## D-020 · Action recommendations are data-driven via `action_recommendation_rules`
+
+**Choice**: Replaced the three hardcoded recommendation paths (`recommend_next_action` MCP tool, `customer_escalation_summary` skill, `closure_readiness_check` skill) with a single rules engine that evaluates rows from a new `action_recommendation_rules` table. The engine matches in-memory *facts* (the inputs each recommender already computes) against JSONB *conditions* and returns the first match by `priority_order`. Operators can now add, retire, or reorder recommendations by editing the table — no developer commit, no service restart. The engine snapshot reloads via the realtime broadcaster (D-018) within ~2 ms of any DB change.
+
+**Why** (the architectural exit from the D-019 "remaining gap"): D-019 made `action_catalogue` the live source of truth for which action types *exist*, but the three hand-coded recommenders meant a new action_type would never be *recommended* by the agent unless a developer wrote a new if/else branch. That created an awkward UX gap — operators could add to the menu but the agent ignored their additions. D-020 closes the gap by moving the picking logic itself into the DB.
+
+**Why this design (JSONB conditions, first-match by priority, not a full rules engine)**:
+- The existing hardcoded branches are simple — each is "X equals Y" or "X in [Y,Z]" or "X is null" combined with AND. A JSONB shape with a handful of operators covers every case cleanly.
+- First-match-wins matches the original `if/elif/elif/else` semantics, so the migration is mechanical (rules at priority 10, 20, 30 … with the catch-all at 999).
+- No expression parser. No sandboxed code execution. The whole evaluator is ~30 lines of Python. Unknown operators *fail closed* (the rule is skipped) so a typo in conditions can never accidentally match everything.
+
+**Implementation**:
+- **Table** (`infra/postgres/migrations/d020_recommendation_rules.sql` + `init.sql` sync): `rule_ref`, `recommender`, `priority_order`, `conditions JSONB`, `action_type FK→action_catalogue`, `recommended_priority`, `rationale_template`, `is_active`, `notes`. Index on `(recommender, priority_order) WHERE is_active`. CHECK constraint on `recommended_priority`. The D-018 realtime trigger is attached.
+- **Seed** (13 rules): all 5 branches of the MCP tool + all 6 of `customer_escalation_summary` + all 2 of `closure_readiness_check`, with `priority_order` preserving the original if/elif evaluation order. Each rule has a `notes` field explaining its purpose for the eventual ops-facing editor UI.
+- **App engine** (`src/acme_app/policy/recommendation_engine.py`): live snapshot pattern identical to D-019 — module-level `_rules` list, `refresh_from_db()` at startup, `handle_event()` registered as a realtime post-fan-out hook. Public API: `evaluate(recommender, facts) → Recommendation | None`. Fails to `None` rather than raising, so a missing rule set degrades to the caller's fallback rather than a 500.
+- **MCP engine** (`mcp_server/src/acme_mcp/recommendation_engine.py`): sync psycopg loader with 5 s TTL cache, same pattern as D-019's `validation.py`. Identical operator vocabulary.
+- **Wiring**: `customer_escalation_summary._recommend` and `closure_readiness_check` now call the engine and fall back to a safe default (`SCHEDULE_REVIEW`/`Low` and the original closure branches respectively) if the snapshot is empty. The MCP `recommend_next_action` tool does the same. **`closure_readiness_check` still composes its own rationale** because that text depends on the dynamic `missing` list — engine templates handle constant-rationales (`'All closure conditions satisfied.'`) cleanly but can't expand a runtime list.
+- **DB Explorer**: `action_recommendation_rules` registered in `TABLE_COLUMNS`, `LINKS`, and `DEFAULT_ORDER`. `action_catalogue.action_type` now expands into "recommendation rules that propose this action" alongside "actions of this type". Operators can browse "which rules use this action_type" with one click.
+- **Tests**: 12 new unit tests covering operator semantics (in, not_in, null, not_null, equality), first-match ordering, recommender isolation, template rendering with missing facts, and a regression that the seeded `customer_escalation_summary` rules reproduce the original 5 hardcoded branches on representative inputs. Full suite: 133 passed, 4 skipped.
+- **Live verified**: inserted `REQUEST_LEGAL_REVIEW` into `action_catalogue` + a new rule routing `risk=High AND severity in (P2, P3)` to it, at `priority_order=25` (between the existing rules at 20 and 30). Within 2 ms the engine reloaded (13 → 14 rules) and `evaluate(...)` returned `REQUEST_LEGAL_REVIEW` for those inputs — without any code change.
+
+**What stayed in code (deliberately)**:
+- Each skill still *computes its facts* before calling the engine — risk classification (`domain.risk_rules.classify_simple`), "is there a resolution note?" text-searching, "is the recovery plan complete?" status check. These are domain calculations, not rules.
+- Each skill still *composes its narrative summary* (the human-readable text the user sees). Templating narratives from the DB would need a real templating runtime (Jinja against operator-supplied templates) and is a much larger change.
+- The MCP tool's static fallback (`CUSTOMER_FOLLOW_UP/Medium` when the engine snapshot is empty) lives in code. This is the safety net for a transient DB outage — the agent recommends *something* deterministic rather than refusing to answer.
+
+**Operator-facing contract**:
+- **To add a new recommendation**: INSERT into `action_catalogue` (if the action_type is new), then INSERT into `action_recommendation_rules`. The agent recommends it on the next matching turn — no restart, no deploy.
+- **To retire one**: `UPDATE action_recommendation_rules SET is_active=false`. The engine excludes it on the next reload (sub-second app, ≤5 s MCP).
+- **To reorder priority**: `UPDATE … SET priority_order=…`. Live.
+- **Available fact keys per recommender** (documented in the migration comments and in `notes` on each row):
+  - `recommend_next_action_tool` — `tier`, `severity`, `sla`, `owner`
+  - `customer_escalation_summary` — `risk`, `has_owner`, `severity`
+  - `closure_readiness_check` — `ready_to_close`
+
+**Production**:
+- Add the cell-edit UI to the DB Explorer for `action_recommendation_rules` so operators don't need direct SQL access. The append-only invariant (D-017) doesn't apply here — rules are configuration, not audit — but a `rule_changes` audit log capturing who edited which rule when is the right addition for a real deployment.
+- Promote `closure_readiness_check`'s dynamic rationale into an engine feature (e.g. template operators like `{missing | join: '; '}`). Not blocking — the existing carve-out is small and self-documenting.
+- Replace MCP's 5 s TTL with a LISTEN consumer thread for sub-second consistency across processes. Same recommendation as D-019.
+- Consider a *rules tester* page: pick a recommender, type some facts, see which rule would match. Hugely useful for operators editing rules without re-deploying chat traffic to test them.
+
+**Remaining skill data-drivening (out of scope, explicitly)**: a "full" data-driven skill layer would also move the *fact computation* (risk classification, missing-info detection) and *narrative templating* into tables. That's three more components — a domain-rules engine, a templating runtime, possibly a small DSL for declaring skill structure — and is genuinely a separate project. D-020 covers the recommendation half because that's where the value-per-line-of-code is highest: it's the half that ops asked for, and the half that gates "can a new action_type actually be used".

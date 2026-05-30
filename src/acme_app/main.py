@@ -20,7 +20,7 @@ from acme_app.api.routes_traces import router as traces_router
 from acme_app.application.realtime import broadcaster as realtime_broadcaster
 from acme_app.auth.current_user import get_optional_user
 from acme_app.observability.otel import setup_otel
-from acme_app.policy import action_catalogue
+from acme_app.policy import action_catalogue, recommendation_engine
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
@@ -37,8 +37,10 @@ async def _start_realtime() -> None:
     # hardcoded bootstrap fallback. Then start the broadcaster and register
     # the hot-reload hook (D-019).
     await action_catalogue.refresh_from_db()
+    await recommendation_engine.refresh_from_db()
     await realtime_broadcaster.start()
     realtime_broadcaster.on_event(action_catalogue.handle_event)
+    realtime_broadcaster.on_event(recommendation_engine.handle_event)
 
 
 @app.on_event('shutdown')

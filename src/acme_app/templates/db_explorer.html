@@ -247,16 +247,46 @@
 </div>
 
 <script>
-  const META = {{ metadata_json|safe }};
+  let META = {{ metadata_json|safe }};
 
   // ─── Sidebar ─────────────────────────────────────────────────────────────
   const tableList = document.getElementById('table-list');
-  for (const t of META.tables) {
-    const li = document.createElement('li');
-    li.textContent = t;
-    li.dataset.table = t;
-    li.addEventListener('click', () => selectRoot(t));
-    tableList.appendChild(li);
+
+  function buildSidebar() {
+    // Preserve which root the user currently has selected; if it's still
+    // in the new list we re-mark it active after rebuild.
+    const activeLi = tableList.querySelector('li.active');
+    const previouslyActive = activeLi ? activeLi.dataset.table : null;
+
+    tableList.innerHTML = '';
+    for (const t of META.tables) {
+      const li = document.createElement('li');
+      li.textContent = t;
+      li.dataset.table = t;
+      if (t === previouslyActive) li.classList.add('active');
+      li.addEventListener('click', () => selectRoot(t));
+      tableList.appendChild(li);
+    }
+  }
+
+  buildSidebar();
+
+  async function refreshMetadata() {
+    // Called on every WebSocket (re)connect. If the backend has been
+    // restarted with new/changed tables in its registry, we update META
+    // and rebuild the sidebar without disrupting the user's current view.
+    try {
+      const resp = await fetch('/db-explorer/metadata');
+      if (!resp.ok) return;
+      const fresh = await resp.json();
+      const oldList = JSON.stringify(META.tables);
+      const newList = JSON.stringify(fresh.tables);
+      if (oldList === newList && JSON.stringify(META.columns) === JSON.stringify(fresh.columns)) {
+        return; // nothing changed
+      }
+      META = fresh;
+      buildSidebar();
+    } catch (_) { /* offline / transient; next reconnect will retry */ }
   }
 
   // ─── Rendering helpers ───────────────────────────────────────────────────
@@ -655,6 +685,9 @@
     ws.onopen = () => {
       liveBackoffMs = 1000;
       setLive('live', 'live');
+      // Backend may have restarted while we were offline — refresh the
+      // table registry in case new tables / columns / links appeared.
+      refreshMetadata();
     };
     ws.onmessage = async (evt) => {
       let msg;

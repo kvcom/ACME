@@ -66,6 +66,11 @@ TABLE_COLUMNS: dict[str, list[str]] = {
         'action_type', 'label', 'description', 'side_effect_level',
         'allowed_roles', 'requires_confirmation', 'is_active',
     ],
+    'action_recommendation_rules': [
+        'rule_ref', 'recommender', 'priority_order', 'conditions',
+        'action_type', 'recommended_priority', 'rationale_template',
+        'is_active', 'notes', 'created_at', 'id',
+    ],
     'conversations': [
         'conversation_ref', 'username', 'title',
         'last_message_at', 'last_message_preview', 'message_count',
@@ -169,6 +174,13 @@ LINKS: dict[tuple[str, str], list[Link]] = {
     # ── action_catalogue ──
     ('action_catalogue', 'action_type'): [
         Link('has_many', 'next_actions', 'action_type', 'actions of this type'),
+        Link('has_many', 'action_recommendation_rules', 'action_type',
+             'recommendation rules that propose this action'),
+    ],
+
+    # ── action_recommendation_rules ──
+    ('action_recommendation_rules', 'action_type'): [
+        Link('belongs_to', 'action_catalogue', 'action_type', 'action definition'),
     ],
 
     # ── conversations ──
@@ -233,6 +245,7 @@ DEFAULT_ORDER: dict[str, str] = {
     'issue_updates': 'created_at DESC',
     'next_actions': 'created_at DESC',
     'action_catalogue': 'action_type',
+    'action_recommendation_rules': 'recommender, priority_order',
     'conversations': 'last_message_at DESC',
     'agent_traces': 'created_at DESC',
     'trace_events': 'created_at DESC',

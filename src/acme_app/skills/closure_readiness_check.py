@@ -7,7 +7,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from acme_app.policy import recommendation_engine
+
 VERSION = 'v1'
+
+_RECOMMENDER = 'closure_readiness_check'
 
 
 def run(
@@ -43,12 +47,25 @@ def run(
         missing.append('Any issue updates')
 
     ready = (not blockers_open) and has_customer_acceptance and not missing
+    # D-020: action_type comes from the rules engine. The skill still
+    # composes the rationale dynamically because it depends on the
+    # `missing` list which isn't expressible in a simple template.
+    engine_rec = recommendation_engine.evaluate(_RECOMMENDER, {'ready_to_close': ready})
+    if engine_rec is not None:
+        action_type = engine_rec.action_type
+        priority = engine_rec.priority
+    else:
+        # Fallback (DB unreachable at startup): preserve original behaviour.
+        action_type = 'UPDATE_ISSUE_STATUS' if ready else 'REQUEST_MISSING_INFO'
+        priority = 'Medium' if ready else 'High'
+
     if ready:
-        rec = {'action_type': 'UPDATE_ISSUE_STATUS', 'priority': 'Medium',
-               'title': f'Close {issue_ref}', 'rationale': 'All closure conditions satisfied.'}
+        rec = {'action_type': action_type, 'priority': priority,
+               'title': f'Close {issue_ref}',
+               'rationale': 'All closure conditions satisfied.'}
         reason = 'All closure conditions satisfied.'
     else:
-        rec = {'action_type': 'REQUEST_MISSING_INFO', 'priority': 'High',
+        rec = {'action_type': action_type, 'priority': priority,
                'title': f'Request missing information for {issue_ref}',
                'rationale': 'Required closure artefacts are missing: ' + '; '.join(missing)}
         reason = 'Required closure artefacts are missing: ' + '; '.join(missing)

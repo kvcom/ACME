@@ -9,9 +9,17 @@ from __future__ import annotations
 from typing import Any
 
 from acme_app.domain.risk_rules import classify_simple
+from acme_app.policy import recommendation_engine
 
 
 VERSION = 'v1'
+
+
+# Fallback used only if the engine returns None (e.g. DB outage at startup
+# before refresh_from_db() ran). Matches the old "if nothing else matches,
+# recommend SCHEDULE_REVIEW / Low" branch.
+_RECOMMENDER = 'customer_escalation_summary'
+_FALLBACK_ACTION = {'action_type': 'SCHEDULE_REVIEW', 'priority': 'Low'}
 
 
 def _highest_severity(issues: list[dict[str, Any]]) -> str:
@@ -29,17 +37,17 @@ def _worst_sla(issues: list[dict[str, Any]]) -> str:
 
 
 def _recommend(risk: str, has_owner: bool, severity: str) -> dict[str, str]:
-    if risk == 'Critical':
-        return {'action_type': 'PREPARE_RECOVERY_PLAN', 'priority': 'Critical'}
-    if risk == 'High':
-        if severity == 'P1':
-            return {'action_type': 'PREPARE_RECOVERY_PLAN', 'priority': 'High'}
-        return {'action_type': 'ESCALATE_ISSUE', 'priority': 'High'}
-    if risk == 'Medium':
-        if not has_owner:
-            return {'action_type': 'ASSIGN_OWNER', 'priority': 'Medium'}
-        return {'action_type': 'CUSTOMER_FOLLOW_UP', 'priority': 'Medium'}
-    return {'action_type': 'SCHEDULE_REVIEW', 'priority': 'Low'}
+    # D-020: action_type selection moved to action_recommendation_rules.
+    # The skill computes the facts (risk, has_owner, severity) and asks the
+    # engine which rule matches. Operators can change the mapping by editing
+    # the table — no code change. Fallback is used only if the engine
+    # snapshot is empty (DB outage at startup).
+    rec = recommendation_engine.evaluate(_RECOMMENDER, {
+        'risk': risk, 'has_owner': has_owner, 'severity': severity,
+    })
+    if rec is None:
+        return dict(_FALLBACK_ACTION)
+    return {'action_type': rec.action_type, 'priority': rec.priority}
 
 
 def run(

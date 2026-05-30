@@ -21,6 +21,7 @@ import time
 from datetime import datetime
 from typing import Any
 
+from acme_mcp import recommendation_engine
 from acme_mcp.db import get_conn
 from acme_mcp.validation import ALLOWED_ISSUE_STATUSES, allowed_action_types, role_may_create
 
@@ -207,23 +208,29 @@ def recommend_next_action(issue_ref: str) -> dict[str, Any]:
     severity = history.get('severity', 'P3')
     sla = history.get('sla_status', 'Within SLA')
     tier = history.get('customer_tier', 'Mid-market')
-    if tier in ('Enterprise', 'Strategic') and severity == 'P1' and sla == 'Breached':
-        action_type, priority = 'PREPARE_RECOVERY_PLAN', 'Critical'
-    elif severity == 'P1':
-        action_type, priority = 'PREPARE_RECOVERY_PLAN', 'High'
-    elif severity == 'P2' and sla == 'At Risk':
-        action_type, priority = 'ESCALATE_ISSUE', 'High'
-    elif not history.get('owner'):
-        action_type, priority = 'ASSIGN_OWNER', 'Medium'
+    owner = history.get('owner')
+
+    # D-020: action_type selection is data-driven. Rules live in the
+    # `action_recommendation_rules` table; the engine picks the first
+    # matching one (sorted by priority_order). The fallback below only
+    # fires if the engine snapshot is empty (DB outage / table empty).
+    facts = {'tier': tier, 'severity': severity, 'sla': sla, 'owner': owner}
+    engine_rec = recommendation_engine.evaluate('recommend_next_action_tool', facts)
+    if engine_rec is not None:
+        action_type = engine_rec['action_type']
+        priority = engine_rec['priority']
+        rationale = engine_rec['rationale'] or f'{tier} customer, {severity} issue, SLA {sla}.'
     else:
         action_type, priority = 'CUSTOMER_FOLLOW_UP', 'Medium'
+        rationale = f'{tier} customer, {severity} issue, SLA {sla}.'
+
     return {
         'issue_ref': issue_ref,
         'action_type': action_type,
         'priority': priority,
         'title': f'{action_type.replace("_", " ").title()} for {history.get("customer_name", "customer")} {issue_ref}',
         'description': f'Recommended in response to {severity} issue (SLA: {sla}).',
-        'rationale': f'{tier} customer, {severity} issue, SLA {sla}.',
+        'rationale': rationale,
         'evidence': history.get('evidence', []),
     }
 

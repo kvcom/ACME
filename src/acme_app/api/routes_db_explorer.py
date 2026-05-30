@@ -125,6 +125,23 @@ async def db_explorer_page(
     )
 
 
+@router.get('/metadata')
+async def metadata(
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Return the same {tables, columns, links} payload the page bakes in
+    at render time. The frontend re-fetches this on every WebSocket
+    reconnect so that if the backend has restarted with new tables /
+    columns / relationships in its registry (e.g. after a developer added
+    one), open browser tabs pick up the change without manual refresh."""
+    _require_admin(user)
+    return {
+        'tables': EXPLORER_TABLES,
+        'columns': TABLE_COLUMNS,
+        'links': {table: expandable_fields(table) for table in EXPLORER_TABLES},
+    }
+
+
 @router.get('/rows/{table}')
 async def rows_for_table(
     table: str,
