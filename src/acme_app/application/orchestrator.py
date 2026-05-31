@@ -167,6 +167,8 @@ _KNOWN_CUSTOMERS = (
     'Northwind Energy', 'Contoso Retail',
     'Acme Logistics Europe', 'Acme Manufacturing Group',
     'BlueRiver Health', 'Skyline Aviation',
+    'Greenfield Foods', 'Redwood Telecom', 'Meridian Bank',
+    'Nimbus Labs', 'Nimbus Logistics',
 )
 _ISSUE_REF_RE = re.compile(r'\bISS-\d{3,5}\b', re.I)
 _WRITE_INTENT_RE = re.compile(
@@ -190,6 +192,11 @@ _CUSTOMER_ALIASES = {
     'skyline': 'Skyline Aviation',
     'acme logistics': 'Acme Logistics Europe',
     'acme manufacturing': 'Acme Manufacturing Group',
+    'greenfield': 'Greenfield Foods',
+    'redwood': 'Redwood Telecom',
+    'meridian': 'Meridian Bank',
+    'nimbus labs': 'Nimbus Labs',
+    'nimbus logistics': 'Nimbus Logistics',
 }
 
 
@@ -480,6 +487,7 @@ def _stabilise_plan_for_supported_workflows(
         plan.write_requested = True
 
     if asks_recommendation and issue_ref:
+        _append_step(plan, 'tool', 'summarise_issue_history', {'issue_ref': issue_ref}, 'retrieve recommendation evidence')
         _append_step(plan, 'tool', 'recommend_next_action', {'issue_ref': issue_ref}, 'choose governed next action')
 
     after = [(s.step_type, s.name, dict(s.arguments)) for s in plan.steps]

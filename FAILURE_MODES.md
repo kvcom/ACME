@@ -4,8 +4,8 @@ How the system degrades when each dependency misbehaves. Eval case 13 covers the
 
 | Dependency | Symptom | System behaviour | User-visible message |
 |---|---|---|---|
-| LLM API | Timeout / 429 / 5xx | Real adapter catches and falls back to the stub planner so the request still completes. The trace records the LLM error in a `llm.call.error` event. | (Best case) Result is returned with a note in the trace; if the stub fallback is disabled the user sees: *"The assistant is temporarily unable to answer. Trace TRC-… recorded."* |
-| LLM API | Missing API key | `AnthropicProvider` / `OpenAIProvider` constructors detect the missing key and fall back to the stub. Logged once at startup. | Demo runs end-to-end without keys; trace shows `provider=stub` and `cost_usd=0`. |
+| LLM API | Timeout / 429 / 5xx | The selected provider raises a typed failure; the orchestrator records an LLM-unavailable trace and does not invent grounded facts. Auto routes may try the configured next real provider before surfacing the error. | *"The assistant is temporarily unable to answer. Trace TRC-... recorded."* |
+| LLM API | Missing API key | Provider constructors fail fast with a clear configuration error. The app does not silently switch to a mock model. | The user sees the LLM-unavailable message and the trace captures the failed provider path. |
 | Keycloak | Down at startup | App still starts. `/login` falls back to demo cookie session for the three demo users (DECISION_LOG D-005). | Login still works for demo users; production users see *"Authentication unavailable, please retry."* |
 | Keycloak | Down mid-session | JWT decoding still works (we decode without verification — D-004); expired tokens cause 401. | *"Session expired. Please sign in again."* |
 | PostgreSQL | Down | All endpoints return 503. No fallback. Healthcheck flags red. | *"The system is unavailable. Please try again shortly."* |
@@ -22,7 +22,7 @@ How the system degrades when each dependency misbehaves. Eval case 13 covers the
 
 - `GET /ready` reports per-dependency status. Use it as the basis for ops dashboards.
 - `make eval` includes case 13 (LLM unavailable) and the adversarial / idempotency cases.
-- `tests/test_failure_modes.py` covers provider fallback and the Ollama stub.
+- `tests/test_failure_modes.py` covers missing-key, unknown-provider, and LLM-unavailable behaviour.
 - `tests/test_idempotency.py` covers token integrity and key stability.
 
 ## What is intentionally not handled

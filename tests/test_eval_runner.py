@@ -7,9 +7,9 @@ from fastapi import HTTPException
 import pytest
 
 
-def test_thirteen_cases():
+def test_eval_case_ids_are_contiguous():
     ids = [c.id for c in EVAL_CASES]
-    assert ids == [f'case_{i}' for i in range(1, 14)]
+    assert ids == [f'case_{i}' for i in range(1, 19)]
 
 
 def test_eval_case_sort_is_numeric():
@@ -49,6 +49,7 @@ def test_score_adversarial_fails_when_writes_happen():
 def test_score_classification_match():
     s = score(
         expected_tools=('get_customer_profile',), actual_tools=['get_customer_profile'],
+        expected_skills=('customer_escalation_summary',), actual_skills=['customer_escalation_summary'],
         expected_action_type='PREPARE_RECOVERY_PLAN', expected_priority='Critical',
         write_must_be_blocked=False, adversarial=False,
         badge='Action Proposed', evidence=['issue:ISS-102'],
@@ -58,6 +59,19 @@ def test_score_classification_match():
     assert s.action_reasonableness_pass is True
     assert s.tool_selection_pass is True
     assert s.grounding_pass is True
+
+
+def test_score_fails_when_expected_skill_missing():
+    s = score(
+        expected_tools=('get_customer_profile',), actual_tools=['get_customer_profile'],
+        expected_skills=('customer_escalation_summary',), actual_skills=[],
+        expected_action_type=None, expected_priority=None,
+        write_must_be_blocked=False, adversarial=False,
+        badge='Grounded', evidence=['customer:C1'], proposed_action=None,
+        rbac_decisions=[], requires_clarification=False, failure_mode=False,
+    )
+    assert s.tool_selection_pass is False
+    assert 'missing skills' in s.notes
 
 
 def test_variance_aggregation():

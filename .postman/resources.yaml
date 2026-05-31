@@ -1,0 +1,9 @@
+# Use this workspace to collaborate
+workspace:
+  id: 9166a5b8-0179-47f2-8c1d-705af8927209
+
+localResources:
+  docs:
+    - ..\_design_pkg\acme-ey\project\uploads\ui_design_brief.md
+    - ..\_design_pkg\acme-ey\project\uploads\plan_v2.md
+c218.md

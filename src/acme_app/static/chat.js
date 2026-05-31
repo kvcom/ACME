@@ -19,7 +19,7 @@
   // We store the model_key (e.g. "claude-sonnet-4") not the display label.
   const STORAGE_KEY = 'acme_model_key';
   const PREVIOUS_DEFAULT_MODEL_KEYS = new Set(['gpt-5.4-mini']);
-  const serverDefaultModelKey = document.body.dataset.modelKey || 'stub';
+  const serverDefaultModelKey = document.body.dataset.modelKey || 'claude-opus-4-8';
   let currentModelKey = (() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
@@ -35,7 +35,7 @@
   function escape(s) {
     return String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
   }
-  function modelKey() { return currentModelKey || 'stub'; }
+  function modelKey() { return currentModelKey || serverDefaultModelKey; }
   function convRef()  { return document.body.dataset.conversationRef || 'CONV-DEMO'; }
   const BADGE_CLASS = {
     'Grounded': 'grounded',
@@ -191,28 +191,59 @@
     if (el) el.remove();
   }
 
-  // Type out the answer character-by-character. The plan card already shows
-  // composing state, so avoid an inline caret that can jump around markdown.
+  const activeTypewriters = new Set();
+
+  function flushTypewriters() {
+    activeTypewriters.forEach(job => job.finish());
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) flushTypewriters();
+  });
+
+  // Type out the answer character-by-character. Background tabs throttle JS
+  // timers heavily, so we finish any active typewriter when the page is hidden;
+  // the completed response is then waiting when the user returns.
   function typewriter(el, text, speed = 12, onUpdate = null) {
     return new Promise(resolve => {
       el.textContent = '';
       let i = 0;
-      function step() {
-        if (i >= text.length) {
-          return resolve();
-        }
-        const ch = text[i++];
-        const before = text.slice(0, i);
+      let timer = null;
+      let done = false;
+      const fullText = String(text || '');
+      const render = value => {
         if (onUpdate) {
-          onUpdate(before);
+          onUpdate(value);
         } else {
-          el.textContent = before;
+          el.textContent = value;
         }
+      };
+      const finish = () => {
+        if (done) return;
+        done = true;
+        if (timer) clearTimeout(timer);
+        render(fullText);
+        activeTypewriters.delete(job);
+        resolve();
+      };
+      const job = {finish};
+      activeTypewriters.add(job);
+      if (document.hidden) {
+        finish();
+        return;
+      }
+      function step() {
+        if (done) return;
+        if (document.hidden || i >= fullText.length) {
+          finish();
+          return;
+        }
+        const ch = fullText[i++];
+        render(fullText.slice(0, i));
         // Briefly pause on sentence punctuation for a more natural cadence.
         const delay = /[.!?]/.test(ch) ? speed * 8
                     : /[,;:]/.test(ch) ? speed * 4
                     : speed;
-        setTimeout(step, delay);
+        timer = setTimeout(step, delay);
       }
       step();
     });

@@ -1,4 +1,4 @@
-"""13 evaluation cases per plan_v2.md section 17.4.
+"""Evaluation cases per plan_v2.md section 17.4 plus demo edge cases.
 
 Cases that depend on prior state (case 3, 8, 12) carry a `setup` list of
 queries to send first, in order, in the same conversation. The runner replays
@@ -124,6 +124,39 @@ EVAL_CASES: list[EvalCase] = [
         query='What should we do next for Northwind?',
         expected_tools=(),
         failure_mode=True,
-        description='LLM provider failure (provider=ollama stub)',
+        description='LLM provider failure (local Ollama unavailable)',
+    ),
+    EvalCase(
+        id='case_14', role='support_user',
+        query='What is Greenfield Foods?',
+        expected_tools=('get_customer_profile',),
+        description='Profile-only customer lookup — should not fetch issues or run risk skill',
+    ),
+    EvalCase(
+        id='case_15', role='support_user',
+        query='Can we close Greenfield Foods issue ISS-701?',
+        expected_tools=('summarise_issue_history',),
+        expected_skills=('closure_readiness_check',),
+        description='Closure-ready resolved issue with customer acceptance',
+    ),
+    EvalCase(
+        id='case_16', role='support_user',
+        query='What is going on with Redwood Telecom and what should we do next?',
+        expected_tools=('get_customer_profile', 'get_open_issues'),
+        expected_skills=('customer_escalation_summary',),
+        description='P2 at-risk stale unowned issue — escalation summary should flag urgency',
+    ),
+    EvalCase(
+        id='case_17', role='sales_user',
+        query='For Redwood Telecom issue ISS-801, recommend the next action.',
+        expected_tools=('summarise_issue_history', 'recommend_next_action'),
+        description='Issue-level recommendation — P2 at risk should recommend escalation',
+    ),
+    EvalCase(
+        id='case_18', role='support_user',
+        query='What is Nimbus?',
+        expected_tools=(),
+        requires_clarification=True,
+        description='Ambiguous new customer family — Nimbus Labs vs Nimbus Logistics',
     ),
 ]

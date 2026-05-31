@@ -38,6 +38,8 @@ class CaseResult:
     query: str
     expected_tools: list[str]
     actual_tools: list[str]
+    expected_skills: list[str]
+    actual_skills: list[str]
     score: CaseScore
     badge: str
     trace_ref: str
@@ -58,6 +60,7 @@ async def _run_single(session: AsyncSession, case: EvalCase, run: int, provider:
     await clear_pending_action(conv_ref)
 
     accumulated_tools: list[str] = []
+    accumulated_skills: list[str] = []
     last_proposed: dict[str, Any] | None = None
     rbac_decisions_total: list[dict[str, Any]] = []
     cost_total = 0.0
@@ -79,6 +82,7 @@ async def _run_single(session: AsyncSession, case: EvalCase, run: int, provider:
             role=case.role, conversation_ref=conv_ref, provider_name=provider,
         )
         accumulated_tools.extend(resp.tools_called)
+        accumulated_skills.extend(resp.skills_invoked)
         if resp.proposed_action:
             last_proposed = resp.proposed_action.model_dump()
         latency_total += resp.latency_ms
@@ -92,6 +96,7 @@ async def _run_single(session: AsyncSession, case: EvalCase, run: int, provider:
     except Exception as exc:
         score_obj = score(
             expected_tools=case.expected_tools, actual_tools=accumulated_tools,
+            expected_skills=case.expected_skills, actual_skills=accumulated_skills,
             expected_action_type=case.expected_action_type, expected_priority=case.expected_priority,
             write_must_be_blocked=case.write_must_be_blocked, adversarial=case.adversarial,
             badge='LLM unavailable', evidence=evidence_total, proposed_action=last_proposed,
@@ -101,6 +106,7 @@ async def _run_single(session: AsyncSession, case: EvalCase, run: int, provider:
         return CaseResult(
             case_id=case.id, run=run, role=case.role, query=case.query,
             expected_tools=list(case.expected_tools), actual_tools=accumulated_tools,
+            expected_skills=list(case.expected_skills), actual_skills=accumulated_skills,
             score=score_obj, badge='LLM unavailable',
             trace_ref='', cost_usd=cost_total, latency_ms=latency_total,
             notes=f'exception: {exc}',
@@ -111,6 +117,7 @@ async def _run_single(session: AsyncSession, case: EvalCase, run: int, provider:
             provider_factory._CACHE.pop('ollama:qwen3.5:9b', None)
 
     accumulated_tools.extend(final.tools_called)
+    accumulated_skills.extend(final.skills_invoked)
     if final.proposed_action:
         last_proposed = final.proposed_action.model_dump()
     evidence_total.extend(final.evidence)
@@ -122,6 +129,8 @@ async def _run_single(session: AsyncSession, case: EvalCase, run: int, provider:
     score_obj = score(
         expected_tools=case.expected_tools,
         actual_tools=accumulated_tools,
+        expected_skills=case.expected_skills,
+        actual_skills=accumulated_skills,
         expected_action_type=case.expected_action_type,
         expected_priority=case.expected_priority,
         write_must_be_blocked=case.write_must_be_blocked,
@@ -136,6 +145,7 @@ async def _run_single(session: AsyncSession, case: EvalCase, run: int, provider:
     return CaseResult(
         case_id=case.id, run=run, role=case.role, query=case.query,
         expected_tools=list(case.expected_tools), actual_tools=accumulated_tools,
+        expected_skills=list(case.expected_skills), actual_skills=accumulated_skills,
         score=score_obj, badge=last_badge, trace_ref=last_trace,
         cost_usd=cost_total, latency_ms=latency_total, notes=score_obj.notes,
     )
@@ -216,10 +226,11 @@ def write_report(rows: list[CaseResult], provider: str, runs: int) -> None:
         lines.append(f'| {case.id} | {v.get("pass_rate", "0/0")} | {var_axes} |')
 
     lines += ['', '## Run detail', '',
-              '| Run | Case | Role | Tools called | Badge | Tool sel | Ground | RBAC | Action | Adv | Cost | Latency | Notes |',
+              '| Run | Case | Role | Tools / skills called | Badge | Tool sel | Ground | RBAC | Action | Adv | Cost | Latency | Notes |',
               '|---|---|---|---|---|:---:|:---:|:---:|:---:|:---:|---:|---:|---|']
     for r in rows:
-        tools_str = ', '.join(r.actual_tools[:6]) or '—'
+        invoked = list(r.actual_tools[:6]) + [f'skill:{s}' for s in r.actual_skills[:4]]
+        tools_str = ', '.join(invoked) or '—'
         adv = '—' if r.score.adversarial_pass is None else ('✓' if r.score.adversarial_pass else '✗')
         check = lambda b: '✓' if b else '✗'  # noqa: E731
         lines.append(

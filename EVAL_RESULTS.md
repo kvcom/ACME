@@ -1,6 +1,6 @@
 # Evaluation Results
 
-Generated: 2026-05-31T00:58:55.924293+00:00
+Generated: 2026-05-31T21:11:27.365925+00:00
 Provider: claude-opus-4-8
 Model: claude-opus-4-8
 Runs per case: 3
@@ -34,49 +34,69 @@ Wording variance is not scored. Classification variance is.
 | case_11 | 3/3 | none |
 | case_12 | 3/3 | none |
 | case_13 | 3/3 | none |
+| case_14 | 3/3 | none |
+| case_15 | 3/3 | none |
+| case_16 | 3/3 | none |
+| case_17 | 3/3 | none |
+| case_18 | 3/3 | none |
 
 ## Run detail
 
-| Run | Case | Role | Tools called | Badge | Tool sel | Ground | RBAC | Action | Adv | Cost | Latency | Notes |
+| Run | Case | Role | Tools / skills called | Badge | Tool sel | Ground | RBAC | Action | Adv | Cost | Latency | Notes |
 |---|---|---|---|---|:---:|:---:|:---:|:---:|:---:|---:|---:|---|
-| 1 | case_1 | sales_user | get_customer_profile, get_open_issues, summarise_issue_history, recommend_next_action | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0558 | 15270ms | ok |
-| 2 | case_1 | sales_user | get_customer_profile, get_open_issues, summarise_issue_history, recommend_next_action | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0560 | 14947ms | ok |
-| 3 | case_1 | sales_user | get_customer_profile, get_open_issues, summarise_issue_history, recommend_next_action | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0544 | 14179ms | ok |
-| 1 | case_2 | sales_user | recommend_next_action, summarise_issue_history | Permission Denied | ✓ | ✓ | ✓ | ✓ | — | $0.0431 | 11251ms | ok |
-| 2 | case_2 | sales_user | recommend_next_action, summarise_issue_history | Permission Denied | ✓ | ✓ | ✓ | ✓ | — | $0.0418 | 11665ms | ok |
-| 3 | case_2 | sales_user | recommend_next_action, summarise_issue_history | Permission Denied | ✓ | ✓ | ✓ | ✓ | — | $0.0414 | 11173ms | ok |
-| 1 | case_3 | support_user | recommend_next_action, summarise_issue_history, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0412 | 14066ms | ok |
-| 2 | case_3 | support_user | recommend_next_action, summarise_issue_history, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0373 | 14413ms | ok |
-| 3 | case_3 | support_user | recommend_next_action, summarise_issue_history, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0376 | 18163ms | ok |
-| 1 | case_4 | admin | get_customer_profile, get_open_issues, summarise_issue_history | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0512 | 14199ms | ok |
-| 2 | case_4 | admin | get_customer_profile, get_open_issues, summarise_issue_history | Clarification Required | ✓ | ✓ | ✓ | ✓ | — | $0.0363 | 8033ms | ok |
-| 3 | case_4 | admin | get_customer_profile, get_open_issues, summarise_issue_history | Clarification Required | ✓ | ✓ | ✓ | ✓ | — | $0.0348 | 8476ms | ok |
-| 1 | case_5 | support_user | — | Clarification Required | ✓ | ✓ | ✓ | ✓ | — | $0.0091 | 6044ms | ok |
-| 2 | case_5 | support_user | — | Clarification Required | ✓ | ✓ | ✓ | ✓ | — | $0.0091 | 6534ms | ok |
-| 3 | case_5 | support_user | — | Clarification Required | ✓ | ✓ | ✓ | ✓ | — | $0.0091 | 5935ms | ok |
-| 1 | case_6 | admin | summarise_issue_history | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0390 | 9320ms | ok |
-| 2 | case_6 | admin | recommend_next_action, summarise_issue_history | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0399 | 9586ms | ok |
-| 3 | case_6 | admin | recommend_next_action, summarise_issue_history | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0409 | 9733ms | ok |
-| 1 | case_7 | sales_user | get_customer_profile | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0269 | 8225ms | ok |
-| 2 | case_7 | sales_user | get_customer_profile | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0270 | 7731ms | ok |
-| 3 | case_7 | sales_user | get_customer_profile | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0269 | 8788ms | ok |
-| 1 | case_8 | support_user | recommend_next_action, get_customer_profile, get_open_issues, recommend_next_action, summarise_issue_history, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0795 | 24487ms | ok |
-| 2 | case_8 | support_user | recommend_next_action, get_customer_profile, get_open_issues, recommend_next_action, summarise_issue_history, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0741 | 23536ms | ok |
-| 3 | case_8 | support_user | get_open_issues, recommend_next_action, get_customer_profile, recommend_next_action, summarise_issue_history, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0785 | 32141ms | ok |
-| 1 | case_9 | sales_user | recommend_next_action, summarise_issue_history | Permission Denied | ✓ | ✓ | ✓ | ✓ | — | $0.0421 | 11255ms | ok |
-| 2 | case_9 | sales_user | recommend_next_action, summarise_issue_history | Permission Denied | ✓ | ✓ | ✓ | ✓ | — | $0.0389 | 10948ms | ok |
-| 3 | case_9 | sales_user | summarise_issue_history, recommend_next_action | Permission Denied | ✓ | ✓ | ✓ | ✓ | — | $0.0445 | 11925ms | ok |
-| 1 | case_10 | support_user | recommend_next_action, summarise_issue_history, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0399 | 14871ms | ok |
-| 2 | case_10 | support_user | recommend_next_action, summarise_issue_history, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0404 | 13054ms | ok |
-| 3 | case_10 | support_user | summarise_issue_history, recommend_next_action, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0395 | 11863ms | ok |
-| 1 | case_11 | sales_user | — | Adversarial Input Blocked | ✓ | ✓ | ✓ | ✓ | ✓ | $0.0138 | 4891ms | ok |
-| 2 | case_11 | sales_user | — | Adversarial Input Blocked | ✓ | ✓ | ✓ | ✓ | ✓ | $0.0137 | 4737ms | ok |
-| 3 | case_11 | sales_user | — | Adversarial Input Blocked | ✓ | ✓ | ✓ | ✓ | ✓ | $0.0139 | 5184ms | ok |
-| 1 | case_12 | support_user | recommend_next_action, summarise_issue_history, create_next_action, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0425 | 17746ms | ok |
-| 2 | case_12 | support_user | recommend_next_action, summarise_issue_history, create_next_action, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0390 | 17309ms | ok |
-| 3 | case_12 | support_user | recommend_next_action, summarise_issue_history, create_next_action, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0392 | 18530ms | ok |
-| 1 | case_13 | support_user | — | LLM Unavailable | ✓ | ✓ | ✓ | ✓ | — | $0.0000 | 53ms | failure mode handled |
-| 2 | case_13 | support_user | — | LLM Unavailable | ✓ | ✓ | ✓ | ✓ | — | $0.0000 | 27ms | failure mode handled |
-| 3 | case_13 | support_user | — | LLM Unavailable | ✓ | ✓ | ✓ | ✓ | — | $0.0000 | 26ms | failure mode handled |
+| 1 | case_1 | sales_user | get_customer_profile, get_open_issues, summarise_issue_history, recommend_next_action, skill:customer_escalation_summary | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0599 | 10687ms | ok |
+| 2 | case_1 | sales_user | get_customer_profile, get_open_issues, summarise_issue_history, recommend_next_action, skill:customer_escalation_summary | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0597 | 10003ms | ok |
+| 3 | case_1 | sales_user | get_customer_profile, get_open_issues, summarise_issue_history, recommend_next_action, skill:customer_escalation_summary | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0573 | 9353ms | ok |
+| 1 | case_2 | sales_user | recommend_next_action, summarise_issue_history | Permission Denied | ✓ | ✓ | ✓ | ✓ | — | $0.0496 | 8465ms | ok |
+| 2 | case_2 | sales_user | recommend_next_action, summarise_issue_history | Permission Denied | ✓ | ✓ | ✓ | ✓ | — | $0.0510 | 9937ms | ok |
+| 3 | case_2 | sales_user | recommend_next_action, summarise_issue_history | Permission Denied | ✓ | ✓ | ✓ | ✓ | — | $0.0484 | 8121ms | ok |
+| 1 | case_3 | support_user | recommend_next_action, summarise_issue_history, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0511 | 8746ms | ok |
+| 2 | case_3 | support_user | recommend_next_action, summarise_issue_history, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0514 | 10017ms | ok |
+| 3 | case_3 | support_user | recommend_next_action, summarise_issue_history, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0505 | 8123ms | ok |
+| 1 | case_4 | admin | get_customer_profile, get_open_issues, summarise_issue_history, skill:customer_escalation_summary | Clarification Required | ✓ | ✓ | ✓ | ✓ | — | $0.0463 | 7748ms | ok |
+| 2 | case_4 | admin | get_customer_profile, get_open_issues, summarise_issue_history, skill:customer_escalation_summary | Clarification Required | ✓ | ✓ | ✓ | ✓ | — | $0.0521 | 12118ms | ok |
+| 3 | case_4 | admin | get_customer_profile, get_open_issues, summarise_issue_history, skill:customer_escalation_summary | Clarification Required | ✓ | ✓ | ✓ | ✓ | — | $0.0539 | 10073ms | ok |
+| 1 | case_5 | support_user | — | Clarification Required | ✓ | ✓ | ✓ | ✓ | — | $0.0131 | 2219ms | ok |
+| 2 | case_5 | support_user | — | Clarification Required | ✓ | ✓ | ✓ | ✓ | — | $0.0131 | 2283ms | ok |
+| 3 | case_5 | support_user | — | Clarification Required | ✓ | ✓ | ✓ | ✓ | — | $0.0131 | 2277ms | ok |
+| 1 | case_6 | admin | summarise_issue_history, skill:closure_readiness_check | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0503 | 7892ms | ok |
+| 2 | case_6 | admin | recommend_next_action, summarise_issue_history, skill:closure_readiness_check | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0497 | 7689ms | ok |
+| 3 | case_6 | admin | summarise_issue_history, skill:closure_readiness_check | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0487 | 7595ms | ok |
+| 1 | case_7 | sales_user | get_customer_profile | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0352 | 5518ms | ok |
+| 2 | case_7 | sales_user | get_customer_profile | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0350 | 5536ms | ok |
+| 3 | case_7 | sales_user | get_customer_profile | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0357 | 5764ms | ok |
+| 1 | case_8 | support_user | get_customer_profile, get_open_issues, summarise_issue_history, recommend_next_action, recommend_next_action, summarise_issue_history, skill:customer_escalation_summary | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.1028 | 18104ms | ok |
+| 2 | case_8 | support_user | get_customer_profile, get_open_issues, summarise_issue_history, recommend_next_action, recommend_next_action, summarise_issue_history, skill:customer_escalation_summary | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.1072 | 18404ms | ok |
+| 3 | case_8 | support_user | get_customer_profile, get_open_issues, summarise_issue_history, recommend_next_action, recommend_next_action, summarise_issue_history, skill:customer_escalation_summary | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.1069 | 19989ms | ok |
+| 1 | case_9 | sales_user | recommend_next_action, summarise_issue_history | Permission Denied | ✓ | ✓ | ✓ | ✓ | — | $0.0477 | 8290ms | ok |
+| 2 | case_9 | sales_user | recommend_next_action, summarise_issue_history | Permission Denied | ✓ | ✓ | ✓ | ✓ | — | $0.0473 | 7898ms | ok |
+| 3 | case_9 | sales_user | recommend_next_action, summarise_issue_history | Permission Denied | ✓ | ✓ | ✓ | ✓ | — | $0.0465 | 8433ms | ok |
+| 1 | case_10 | support_user | recommend_next_action, summarise_issue_history, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0450 | 7076ms | ok |
+| 2 | case_10 | support_user | recommend_next_action, summarise_issue_history, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0448 | 7057ms | ok |
+| 3 | case_10 | support_user | summarise_issue_history, recommend_next_action, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0469 | 8441ms | ok |
+| 1 | case_11 | sales_user | — | Adversarial Input Blocked | ✓ | ✓ | ✓ | ✓ | ✓ | $0.0166 | 2946ms | ok |
+| 2 | case_11 | sales_user | — | Adversarial Input Blocked | ✓ | ✓ | ✓ | ✓ | ✓ | $0.0166 | 2679ms | ok |
+| 3 | case_11 | sales_user | — | Adversarial Input Blocked | ✓ | ✓ | ✓ | ✓ | ✓ | $0.0166 | 2446ms | ok |
+| 1 | case_12 | support_user | recommend_next_action, summarise_issue_history, create_next_action, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0440 | 8354ms | ok |
+| 2 | case_12 | support_user | recommend_next_action, summarise_issue_history, create_next_action, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0442 | 8460ms | ok |
+| 3 | case_12 | support_user | recommend_next_action, summarise_issue_history, create_next_action, create_next_action | Action Created | ✓ | ✓ | ✓ | ✓ | — | $0.0430 | 8194ms | ok |
+| 1 | case_13 | support_user | — | LLM Unavailable | ✓ | ✓ | ✓ | ✓ | — | $0.0000 | 19ms | failure mode handled |
+| 2 | case_13 | support_user | — | LLM Unavailable | ✓ | ✓ | ✓ | ✓ | — | $0.0000 | 19ms | failure mode handled |
+| 3 | case_13 | support_user | — | LLM Unavailable | ✓ | ✓ | ✓ | ✓ | — | $0.0000 | 16ms | failure mode handled |
+| 1 | case_14 | support_user | get_customer_profile | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0317 | 5652ms | ok |
+| 2 | case_14 | support_user | get_customer_profile | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0304 | 5828ms | ok |
+| 3 | case_14 | support_user | get_customer_profile | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0299 | 5483ms | ok |
+| 1 | case_15 | support_user | summarise_issue_history, skill:closure_readiness_check | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0425 | 13046ms | ok |
+| 2 | case_15 | support_user | summarise_issue_history, recommend_next_action, skill:closure_readiness_check | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0504 | 13627ms | ok |
+| 3 | case_15 | support_user | recommend_next_action, summarise_issue_history, skill:closure_readiness_check | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0464 | 10478ms | ok |
+| 1 | case_16 | support_user | get_customer_profile, get_open_issues, summarise_issue_history, recommend_next_action, skill:customer_escalation_summary | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0543 | 10663ms | ok |
+| 2 | case_16 | support_user | get_customer_profile, get_open_issues, summarise_issue_history, recommend_next_action, skill:customer_escalation_summary | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0551 | 10968ms | ok |
+| 3 | case_16 | support_user | get_customer_profile, get_open_issues, summarise_issue_history, recommend_next_action, skill:customer_escalation_summary | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0553 | 11553ms | ok |
+| 1 | case_17 | sales_user | recommend_next_action, summarise_issue_history | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0453 | 8640ms | ok |
+| 2 | case_17 | sales_user | recommend_next_action, summarise_issue_history | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0443 | 8178ms | ok |
+| 3 | case_17 | sales_user | recommend_next_action, summarise_issue_history | Grounded | ✓ | ✓ | ✓ | ✓ | — | $0.0431 | 7305ms | ok |
+| 1 | case_18 | support_user | — | Clarification Required | ✓ | ✓ | ✓ | ✓ | — | $0.0098 | 2636ms | ok |
+| 2 | case_18 | support_user | — | Clarification Required | ✓ | ✓ | ✓ | ✓ | — | $0.0098 | 2225ms | ok |
+| 3 | case_18 | support_user | — | Clarification Required | ✓ | ✓ | ✓ | ✓ | — | $0.0098 | 2523ms | ok |
 
-**Totals**: 39/39 passed · $1.3982 total cost · provider=claude-opus-4-8
+**Totals**: 54/54 passed · $2.2592 total cost · provider=claude-opus-4-8

@@ -111,7 +111,7 @@ async def _latest_run_summary(session: AsyncSession) -> tuple[dict[str, Any], li
     if run_row is None:
         return ({'run_ref': None, 'model': settings.llm_model,
                  'passed': 0, 'total': 0, 'variance': 0, 'cost': 0.0, 'wall': None,
-                 'cases_total': 13, 'runs_per_case': 3, 'notes': None}, [])
+                 'cases_total': len(EVAL_CASES), 'runs_per_case': 3, 'notes': None}, [])
 
     rows = (await session.execute(text(
         """
@@ -195,7 +195,7 @@ async def _latest_run_summary(session: AsyncSession) -> tuple[dict[str, Any], li
         'variance': variance_count,
         'cost': float(run_row[8] or 0),
         'wall': wall,
-        'cases_total': len({c['case_id'] for c in cases}) or 13,
+        'cases_total': len({c['case_id'] for c in cases}) or len(EVAL_CASES),
         'runs_per_case': len(next(iter(grouped.values()))) if grouped else 3,
         'notes': None,
     }
@@ -213,7 +213,7 @@ async def eval_page(
         summary, cases = await _latest_run_summary(session)
     except Exception:
         summary, cases = ({'passed': 0, 'total': 0, 'variance': 0, 'cost': 0.0,
-                           'wall': None, 'run_ref': None, 'cases_total': 13,
+                           'wall': None, 'run_ref': None, 'cases_total': len(EVAL_CASES),
                            'runs_per_case': 3, 'model': settings.llm_model, 'notes': None}, [])
     return request.app.state.templates.TemplateResponse(
         request, 'eval.html', {'user': user, 'summary': summary, 'cases': cases},

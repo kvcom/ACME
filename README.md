@@ -26,10 +26,10 @@ The **Evidence-to-Action Decision Graph** in the trace viewer is the synthesis o
 | Idempotency on writes (SHA-256 of trace + action + issue) | [action_guard.py](src/acme_app/policy/action_guard.py) |
 | Adversarial input handling | [adversarial.py](src/acme_app/application/adversarial.py), eval case 11 |
 | PII redaction on display | [pii_redactor.py](src/acme_app/policy/pii_redactor.py), trace viewer |
-| Provider abstraction (Stub / Anthropic / OpenAI / Ollama stub) | [providers/](src/acme_app/infrastructure/llm/providers), dropdown in chat |
+| Provider abstraction (Anthropic / OpenAI / Google / local Ollama) | [providers/](src/acme_app/infrastructure/llm/providers), dropdown in chat |
 | Cost and token observability | Every trace records both; visible in `/traces` and trace detail |
 | OpenTelemetry spans + custom trace viewer with Evidence-to-Action graph | [otel.py](src/acme_app/observability/otel.py), [trace_detail.html](src/acme_app/templates/trace_detail.html) |
-| 13-case evaluation suite × 3 runs, variance reported | [evaluation/](src/acme_app/evaluation), [EVAL_RESULTS.md](EVAL_RESULTS.md) |
+| 18-case evaluation suite × 3 runs, variance reported | [evaluation/](src/acme_app/evaluation), [EVAL_RESULTS.md](EVAL_RESULTS.md) |
 
 ## Architecture diagram
 
@@ -42,10 +42,10 @@ flowchart TD
     ADV --> PII[PII Redactor]
     PII --> AG[Agent Orchestrator]
     AG --> LLM[LLM Provider Abstraction]
-    LLM --> STUB[Stub Planner]
     LLM --> ANT[Anthropic]
     LLM --> OAI[OpenAI]
-    LLM --> OLL[Ollama stub]
+    LLM --> GOO[Google Gemini]
+    LLM --> OLL[Local Ollama]
     AG --> REDIS[Redis Memory]
     AG --> MCP[MCP Client]
     MCP --> MCPS[Custom Acme MCP Server]
@@ -174,12 +174,12 @@ Three controls — length bound (4096 chars), pattern-flag regex for prompt-inje
 
 ## Evaluation suite
 
-13 cases × 3 runs by default. Five binary axes: tool selection, grounding, RBAC, action reasonableness, adversarial. Variance is reported per case; classification variance is flagged. Run:
+18 cases × 3 runs by default. Five binary axes: tool/skill selection, grounding, RBAC, action reasonableness, adversarial. Variance is reported per case; classification variance is flagged. Run:
 
 ```bash
 make eval
 # or
-python -m acme_app.evaluation.runner --runs 3 --provider stub
+python -m acme_app.evaluation.runner --runs 3 --provider claude-opus-4-8
 ```
 
 Output: [EVAL_RESULTS.md](EVAL_RESULTS.md) and persisted rows in `eval_runs` / `eval_results`.

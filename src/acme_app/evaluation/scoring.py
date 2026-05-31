@@ -42,6 +42,8 @@ def score(
     rbac_decisions: list[dict],
     requires_clarification: bool,
     failure_mode: bool,
+    expected_skills: tuple[str, ...] = (),
+    actual_skills: list[str] | None = None,
 ) -> CaseScore:
     notes_parts: list[str] = []
 
@@ -67,12 +69,17 @@ def score(
 
     expected_set = set(expected_tools)
     actual_set = set(actual_tools)
+    expected_skill_set = set(expected_skills)
+    actual_skill_set = set(actual_skills or [])
     missing = expected_set - actual_set
+    missing_skills = expected_skill_set - actual_skill_set
     forbidden_writes = {'create_next_action', 'update_next_action', 'update_issue_status'}
     surprise_writes = actual_set & forbidden_writes - expected_set
-    ts_pass = not missing and not surprise_writes
+    ts_pass = not missing and not missing_skills and not surprise_writes
     if missing:
         notes_parts.append(f'missing tools: {sorted(missing)}')
+    if missing_skills:
+        notes_parts.append(f'missing skills: {sorted(missing_skills)}')
     if surprise_writes:
         notes_parts.append(f'unexpected write tools: {sorted(surprise_writes)}')
 

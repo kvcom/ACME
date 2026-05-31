@@ -60,13 +60,13 @@ Each entry: D-NNN, the choice, why, and the production replacement.
 
 **Production**: Rotate the HMAC secret on schedule; consider a short-TTL Redis registry for one-time use of each token.
 
-## D-008 · Stub LLM provider is the default; real providers opt-in
+## D-008 · Real model picker is the default; failure paths are explicit
 
-**Choice**: `LLM_PROVIDER=stub` ships as the default. Anthropic and OpenAI adapters exist and activate when their API keys are present.
+**Choice**: `LLM_PROVIDER=claude-opus-4-8` ships as the default model key. The runtime supports Anthropic, OpenAI, Google Gemini and local Ollama adapters through the shared model registry.
 
-**Why**: The system must run end-to-end without API keys for the panel demo. The stub planner covers all 13 eval cases deterministically and is provably correct. Real providers fall back to the stub if keys are missing so flipping the provider is non-destructive.
+**Why**: The case study is meant to demonstrate live agentic behaviour, not a hidden deterministic mock. Missing keys, local-model outages and provider errors are surfaced as LLM-unavailable traces; eval case 13 verifies that failure mode.
 
-**Production**: Real provider primary, stub kept for unit tests and offline rehearsal.
+**Production**: Keep model selection in configuration, keep provider failures explicit, and use the Auto provider only for an auditable chain of real model fallbacks.
 
 ## D-009 · Custom Acme MCP server, not generic PostgreSQL MCP
 
