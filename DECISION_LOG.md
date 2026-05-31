@@ -92,6 +92,14 @@ Each entry: D-NNN, the choice, why, and the production replacement.
 
 **Production**: Both. OTel for cross-service correlation; the ledger table for the operator-facing trace viewer.
 
+## D-021 · OpenTelemetry is an operational overlay with real local backends
+
+**Choice**: Keep the Decision Ledger as the audit source of truth, but export OTel traces to Jaeger and OTel metrics to Prometheus/Grafana in the local Compose stack. Warning-and-above Python logs are also exported through the collector when the OTel SDK is available.
+
+**Why**: The prior debug exporter proved instrumentation but discarded data. Jaeger makes the stored `otel_trace_id` actionable for engineers, while Prometheus/Grafana provide request, token, cost and latency trends without querying the audit tables.
+
+**Boundary**: OTel remains fail-soft and non-authoritative. If the collector or backend is down, compliance/audit views still read from PostgreSQL (`agent_traces`, `trace_events`, `tool_call_logs`, `rbac_decisions`). Metrics intentionally use low-cardinality labels such as role, intent, provider, model and status; usernames, trace refs and raw user text stay out of the OTel metrics path.
+
 ## D-012 · PII redaction is regex-based for MVP
 
 **Choice**: Email, card, ID, phone patterns. Production extension to Microsoft Presidio is documented but not in scope.

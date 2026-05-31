@@ -12,6 +12,9 @@ flowchart LR
     App --> MCP[Acme MCP Server]
     MCP --> Postgres
     App --> OTel[OpenTelemetry Collector]
+    OTel --> Jaeger[Jaeger]
+    OTel --> Prom[Prometheus]
+    Prom --> Grafana[Grafana]
     App --> LLM[(LLM Provider<br/>stub / Anthropic / OpenAI)]
 ```
 
@@ -24,7 +27,10 @@ flowchart LR
 | postgres | postgres:16 | 5432 | Business truth, traces, eval results |
 | redis | redis:7 | 6379 | Conversation memory, pending actions, caches |
 | keycloak | keycloak:24 | 8080 | Realm, users, RBAC tokens |
-| otel-collector | otel-contrib | 4318 | Span pipeline (drops on debug exporter in MVP) |
+| otel-collector | otel-contrib | 4318, 4317, 8889 | Receives OTLP traces, metrics and logs; exports traces to Jaeger and metrics for Prometheus scraping |
+| jaeger | jaegertracing/all-in-one | 16686 | Local trace backend and UI |
+| prometheus | prom/prometheus | 9090 | Scrapes OTel collector metrics |
+| grafana | grafana/grafana | 3000 | Metrics dashboards; Prometheus datasource is provisioned |
 
 ## 3. Module diagram
 
@@ -186,4 +192,4 @@ Switching provider mid-session is supported via `X-LLM-Provider` header or the U
 
 ## 10. Cost model
 
-`infrastructure/llm/cost_table.py` holds per-provider USD pricing. Every trace records `prompt_tokens`, `completion_tokens`, `estimated_cost_usd`, `llm_latency_ms`, `tool_latency_ms`, `total_latency_ms` so the question *"what does this cost per query?"* has a numeric answer at all times.
+`infrastructure/llm/cost_table.py` holds per-provider USD pricing. Every trace records `prompt_tokens`, `completion_tokens`, `estimated_cost_usd`, `llm_latency_ms`, `tool_latency_ms`, `total_latency_ms` so the question *"what does this cost per query?"* has a numeric answer at all times. The same low-cardinality totals are also emitted as OTel metrics (`acme_agent_*`) for operational views in Prometheus and Grafana.

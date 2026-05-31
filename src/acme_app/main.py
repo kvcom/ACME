@@ -19,15 +19,15 @@ from acme_app.api.routes_health import router as health_router
 from acme_app.api.routes_traces import router as traces_router
 from acme_app.application.realtime import broadcaster as realtime_broadcaster
 from acme_app.auth.current_user import get_optional_user
-from acme_app.observability.otel import setup_otel
+from acme_app.observability.otel import instrument_app, setup_otel
 from acme_app.policy import action_catalogue, recommendation_engine
-
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
 
 setup_otel()
 
 app = FastAPI(title='Acme Operations Assistant', version='1.0.0')
+instrument_app(app)
 
 
 @app.on_event('startup')

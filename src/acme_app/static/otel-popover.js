@@ -85,6 +85,7 @@
         ${spanRows(d.spans)}
         <div class="otel-foot">
           <button class="copy-btn" data-copy="${esc(d.otel_trace_id || '')}">Copy trace id</button>
+          ${d.jaeger_url ? `<a class="otel-link" href="${esc(d.jaeger_url)}" target="_blank">Open in Jaeger ↗</a>` : ''}
           <a class="otel-link" href="/traces/${encodeURIComponent(d.trace_ref)}" target="_blank">Open full decision trace ↗</a>
         </div>`;
       position(btn);

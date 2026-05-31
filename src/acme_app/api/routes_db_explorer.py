@@ -15,23 +15,18 @@ Security:
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-import asyncio
-import logging
-
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from acme_app.application.realtime import broadcaster as realtime_broadcaster
-from acme_app.auth.current_user import _decode_session
-from acme_app.infrastructure.db.session import AsyncSessionLocal
 
 from acme_app.application.db_explorer import (
     DEFAULT_ORDER,
@@ -43,9 +38,10 @@ from acme_app.application.db_explorer import (
     links_for,
     resolve_columns,
 )
-from acme_app.auth.current_user import CurrentUser, get_current_user
-from acme_app.infrastructure.db.session import get_db_session
-
+from acme_app.application.realtime import broadcaster as realtime_broadcaster
+from acme_app.auth.current_user import CurrentUser, _decode_session, get_current_user
+from acme_app.config import settings
+from acme_app.infrastructure.db.session import AsyncSessionLocal, get_db_session
 
 router = APIRouter(prefix='/db-explorer', tags=['db-explorer'])
 _log = logging.getLogger(__name__)
@@ -248,10 +244,9 @@ async def otel_trace_detail(
 ) -> dict[str, Any]:
     """OpenTelemetry trace summary for the popover.
 
-    The collector only has a `debug` exporter (no Jaeger/Tempo UI), but we
-    persist every span ourselves in `trace_events`, so we reconstruct the
-    span timeline from our own data and link back to the full decision-trace
-    viewer at /traces/{trace_ref}.
+    Jaeger receives the real OTel trace. The popover still reconstructs the
+    compact timeline from durable `trace_events` so the audit UI works even if
+    the OTel pipeline is unavailable.
     """
     _require_admin(user)
     trace = (await session.execute(
@@ -281,6 +276,7 @@ async def otel_trace_detail(
 
     return {
         'otel_trace_id': otel_trace_id,
+        'jaeger_url': f"{settings.otel_jaeger_ui_url.rstrip('/')}/trace/{otel_trace_id}",
         'trace_ref': trace['trace_ref'],
         'detected_intent': trace['detected_intent'],
         'final_status': trace['final_status'],

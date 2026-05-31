@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     mcp_server_url: str = 'http://mcp-server:8001'
     otel_exporter_otlp_endpoint: str = 'http://otel-collector:4318'
     otel_service_name: str = 'acme-app'
+    otel_jaeger_ui_url: str = 'http://localhost:16686'
 
     confirmation_hmac_secret: str = 'dev-only-secret-change-me'
     debug_endpoints_enabled: bool = True

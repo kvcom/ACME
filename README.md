@@ -76,6 +76,10 @@ When the boot completes (60–90 s, mostly Keycloak):
 - MCP server: <http://localhost:8001/docs>
 - PostgreSQL: localhost:5432 (acme / acme)
 - Redis: Docker-internal `redis:6379`; Windows tools such as RedisInsight: `127.0.0.1:6380`
+- OpenTelemetry collector: <http://localhost:4318>
+- Jaeger traces: <http://localhost:16686>
+- Prometheus metrics: <http://localhost:9090>
+- Grafana: <http://localhost:3000> (admin / admin)
 
 ```bash
 docker compose ps                       # health overview
@@ -162,7 +166,9 @@ Three controls — length bound (4096 chars), pattern-flag regex for prompt-inje
 
 ## Observability
 
-- **OpenTelemetry spans** for auth, adversarial check, PII redaction, planning, LLM calls, MCP tools, Skills, Redis, DB, propose, confirm. Token and cost are recorded as span attributes.
+- **OpenTelemetry traces** for manual agent spans plus FastAPI, HTTPX and asyncpg auto-instrumentation. The collector exports traces to Jaeger; the trace popover links a stored OTel trace ID to Jaeger when present.
+- **OpenTelemetry metrics** for agent request count, error count, token use, estimated cost, request latency, LLM latency, aggregate tool latency and individual tool-call latency. The collector exposes Prometheus-format metrics on `otel-collector:8889`; Prometheus scrapes them and Grafana is pre-wired to Prometheus.
+- **OpenTelemetry logs** for warning-and-above Python logs, correlated to the active trace context when emitted inside a traced request.
 - **Custom trace viewer** at `/traces/{trace_ref}` — Evidence-to-Action Decision Graph, full event log, tool calls with input/output summary, RBAC decisions, cost, tokens, latency. PII-redacted by default; admin can reveal the original.
 - **Cost table** per provider (`infrastructure/llm/cost_table.py`); every response carries its USD estimate.
 

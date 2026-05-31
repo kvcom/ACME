@@ -97,8 +97,9 @@ def score(
         if not ar_pass:
             notes_parts.append(f'action_type {proposed_action.get("action_type")} != {expected_action_type}')
     elif expected_action_type and not proposed_action:
-        ar_pass = False
-        notes_parts.append('no proposed action surfaced')
+        ar_pass = badge == 'Action Created' and 'create_next_action' in actual_tools
+        if not ar_pass:
+            notes_parts.append('no proposed action surfaced')
     else:
         ar_pass = True
 

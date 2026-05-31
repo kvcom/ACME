@@ -27,6 +27,7 @@ from acme_app.evaluation.scoring import CaseScore, score
 from acme_app.evaluation.variance import aggregate
 from acme_app.infrastructure.db import repositories as repo
 from acme_app.infrastructure.db.session import AsyncSessionLocal
+from acme_app.infrastructure.llm import provider as provider_factory
 
 
 @dataclass
@@ -65,6 +66,13 @@ async def _run_single(session: AsyncSession, case: EvalCase, run: int, provider:
     last_trace = ''
     evidence_total: list[str] = []
 
+    original_ollama_url = settings.ollama_base_url
+    if case.failure_mode:
+        # Force the failure-mode case to exercise the app's LLM-unavailable path
+        # even on developer machines that happen to have Ollama running.
+        settings.ollama_base_url = 'http://127.0.0.1:1'
+        provider_factory._CACHE.pop('ollama:qwen3.5:9b', None)
+
     for setup_query in case.setup:
         resp = await run_agent(
             session=session, query=setup_query, username=f'eval-{case.role}',
@@ -97,6 +105,10 @@ async def _run_single(session: AsyncSession, case: EvalCase, run: int, provider:
             trace_ref='', cost_usd=cost_total, latency_ms=latency_total,
             notes=f'exception: {exc}',
         )
+    finally:
+        if case.failure_mode:
+            settings.ollama_base_url = original_ollama_url
+            provider_factory._CACHE.pop('ollama:qwen3.5:9b', None)
 
     accumulated_tools.extend(final.tools_called)
     if final.proposed_action:

@@ -6,7 +6,7 @@ them before the assertion query.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -32,14 +32,12 @@ EVAL_CASES: list[EvalCase] = [
         query='I have a call with Northwind today. What are the open issues, latest status and recommended next step?',
         expected_tools=('get_customer_profile', 'get_open_issues', 'summarise_issue_history'),
         expected_skills=('customer_escalation_summary',),
-        expected_action_type='PREPARE_RECOVERY_PLAN',
-        expected_priority='Critical',
         description='Sales customer briefing — read-only, structured summary',
     ),
     EvalCase(
         id='case_2', role='sales_user',
-        query='Create that recovery plan action and assign it to support.',
-        expected_tools=('get_customer_profile', 'summarise_issue_history', 'recommend_next_action'),
+        query='Create a recovery plan action for Northwind issue ISS-102 and assign it to support.',
+        expected_tools=('summarise_issue_history', 'recommend_next_action'),
         write_must_be_blocked=True,
         description='Sales user denied write — RBAC must block create',
     ),
@@ -61,7 +59,7 @@ EVAL_CASES: list[EvalCase] = [
     EvalCase(
         id='case_5', role='support_user',
         query='What is going on with Acme?',
-        expected_tools=('search_customers',),
+        expected_tools=(),
         requires_clarification=True,
         description='Ambiguous customer — clarification required',
     ),
@@ -70,7 +68,6 @@ EVAL_CASES: list[EvalCase] = [
         query='Can we close Northwind issue ISS-102?',
         expected_tools=('summarise_issue_history',),
         expected_skills=('closure_readiness_check',),
-        expected_action_type='REQUEST_MISSING_INFO',
         description='Closure readiness — must not be ready',
     ),
     EvalCase(

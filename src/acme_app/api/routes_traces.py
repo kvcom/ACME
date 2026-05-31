@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from acme_app.api._view_helpers import badge_class_for, enrich_trace_row, relative_when
 from acme_app.auth.current_user import CurrentUser, get_current_user
+from acme_app.config import settings
 from acme_app.infrastructure.db import repositories as repo
 from acme_app.infrastructure.db.session import get_db_session
-
 
 router = APIRouter(prefix='/traces', tags=['traces'])
 
@@ -75,6 +75,10 @@ async def trace_otel(
         raise HTTPException(status_code=404, detail='Trace not found')
     return {
         'otel_trace_id': trace.get('otel_trace_id') or '',
+        'jaeger_url': (
+            f"{settings.otel_jaeger_ui_url.rstrip('/')}/trace/{trace.get('otel_trace_id')}"
+            if trace.get('otel_trace_id') else ''
+        ),
         'trace_ref': trace['trace_ref'],
         'detected_intent': trace.get('detected_intent'),
         'final_status': trace.get('final_status'),

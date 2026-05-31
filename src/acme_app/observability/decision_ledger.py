@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from acme_app.infrastructure.db import repositories as repo
+from acme_app.observability.otel import record_agent_request, record_tool_call
 
 
 @dataclass
@@ -126,6 +127,19 @@ async def persist(
         total_latency_ms=ledger.elapsed_ms(),
         otel_trace_id=otel_trace_id,
     )
+    record_agent_request(
+        role=ledger.user_role,
+        intent=detected_intent,
+        status=final_status,
+        provider=llm_provider,
+        model=llm_model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        estimated_cost_usd=estimated_cost_usd,
+        total_latency_ms=ledger.elapsed_ms(),
+        llm_latency_ms=llm_latency_ms,
+        tool_latency_ms=tool_latency_ms,
+    )
     for event in ledger.events:
         await repo.insert_trace_event(
             session,
@@ -137,6 +151,11 @@ async def persist(
             latency_ms=event.latency_ms,
         )
     for call in ledger.tool_calls:
+        record_tool_call(
+            tool_name=call.tool_name,
+            status=call.status,
+            latency_ms=call.latency_ms,
+        )
         await repo.insert_tool_call_log(
             session,
             trace_id=trace_id,
