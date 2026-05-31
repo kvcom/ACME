@@ -75,14 +75,30 @@
     }
 
     /* ── Edit / append UI (D-021) ────────────────────────────────────────── */
-    .add-row-btn {
-      margin-left: auto; margin-right: 14px;
-      background: var(--accent); color: #1a1206; border: 0;
-      border-radius: var(--radius-md); padding: 6px 12px; cursor: pointer;
-      font-family: var(--font-ui); font-size: 11px; font-weight: 600;
-      letter-spacing: 0.04em;
+    /* Floating action button — circular, pinned bottom-right, pencil glyph.
+       Never confused with the inline drill-down "+" buttons. Shown only when
+       the current root table is editable. */
+    .fab-add {
+      position: fixed; right: 28px; bottom: 28px; z-index: 60;
+      width: 52px; height: 52px; border-radius: 50%;
+      background: var(--accent); color: #1a1206; border: 0; cursor: pointer;
+      font-size: 20px; line-height: 1; display: none;
+      align-items: center; justify-content: center;
+      box-shadow: 0 6px 20px rgba(217,119,87,0.45), 0 2px 6px rgba(0,0,0,0.4);
+      transition: transform 120ms, background 120ms;
     }
-    .add-row-btn:hover { background: var(--accent-bright); }
+    .fab-add.show { display: flex; }
+    .fab-add:hover { background: var(--accent-bright); transform: translateY(-2px) scale(1.05); }
+    .fab-add:active { transform: translateY(0) scale(0.98); }
+    /* Tooltip label that fades in on hover. */
+    .fab-add::after {
+      content: 'Add record'; position: absolute; right: 60px; white-space: nowrap;
+      background: #15151a; color: var(--text-secondary); border: 1px solid var(--border-medium);
+      border-radius: 6px; padding: 5px 10px; font-family: var(--font-ui); font-size: 11px;
+      opacity: 0; transform: translateX(6px); transition: opacity 120ms, transform 120ms;
+      pointer-events: none;
+    }
+    .fab-add:hover::after { opacity: 1; transform: translateX(0); }
     /* The add-record form card sits at the top of the grid. */
     .add-form {
       border: 1px solid var(--accent-border); border-radius: var(--radius-md);
@@ -349,7 +365,6 @@
       <div class="main-header">
         <h1 id="root-title">Pick a table to start</h1>
         <span class="hint" id="root-hint">Click any <b>+</b> next to a value to drill into its related rows.</span>
-        <button id="add-row-btn" class="add-row-btn" style="display:none;" title="Add a new record">+ Add record</button>
         <span class="live-pill" id="live-pill" title="WebSocket connection status">
           <span class="label" id="live-text">offline</span>
           <span class="led"></span>
@@ -362,6 +377,7 @@
       </div>
     </main>
   </div>
+  <button id="fab-add" class="fab-add" title="Add record" aria-label="Add record">✎</button>
   <script src="/static/otel-popover.js"></script>
 </div>
 
@@ -920,9 +936,8 @@
     currentRoot = table;
     for (const li of tableList.children) li.classList.toggle('active', li.dataset.table === table);
     document.getElementById('root-title').textContent = table;
-    // Show the Add-record button only for editable root tables.
-    const addBtn = document.getElementById('add-row-btn');
-    addBtn.style.display = isEditable(table) ? '' : 'none';
+    // Show the floating Add-record button only for editable root tables.
+    document.getElementById('fab-add').classList.toggle('show', isEditable(table));
     const grid = document.getElementById('root-grid');
     grid.innerHTML = '<div class="loading">Loading…</div>';
     // Prefetch the edit spec for editable tables so cells can be made
@@ -1028,7 +1043,11 @@
   }
 
   // ─── Append: the "+ Add record" form (D-021) ─────────────────────────────
-  document.getElementById('add-row-btn').addEventListener('click', () => openAddForm(currentRoot));
+  document.getElementById('fab-add').addEventListener('click', () => {
+    openAddForm(currentRoot);
+    // Scroll the form (top of grid) into view since the FAB is bottom-right.
+    document.querySelector('.grid-wrap')?.scrollTo({ top: 0, behavior: 'smooth' });
+  });
 
   function fieldInput(table, col, meta, fkOptions) {
     // Returns {el, get} — the input element and a getter for its value.
