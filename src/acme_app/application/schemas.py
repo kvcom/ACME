@@ -19,6 +19,7 @@ class AgentPlan(BaseModel):
     steps: list[PlanStep] = Field(default_factory=list)
     write_requested: bool = False
     narration_kind: str = 'general'
+    answer_scope: str = 'auto'
     adversarial_flags: list[str] = Field(default_factory=list)
 
 

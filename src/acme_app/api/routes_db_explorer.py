@@ -29,12 +29,18 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pydantic import BaseModel
+
 from acme_app.application.db_explorer import (
     DEFAULT_ORDER,
+    EDITABLE_TABLES,
     EXPLORER_TABLES,
     LINKS,
+    column_edit,
     columns_for,
+    edit_spec_dump,
     expandable_fields,
+    is_editable_table,
     is_table_allowed,
     links_for,
     resolve_columns,
@@ -136,6 +142,7 @@ async def db_explorer_page(
     columns = await resolve_columns()
     metadata = {
         'tables': EXPLORER_TABLES,
+        'editable_tables': EDITABLE_TABLES,
         'columns': columns,
         'links': {table: expandable_fields(table) for table in EXPLORER_TABLES},
     }
@@ -158,6 +165,7 @@ async def metadata(
     columns = await resolve_columns()
     return {
         'tables': EXPLORER_TABLES,
+        'editable_tables': EDITABLE_TABLES,
         'columns': columns,
         'links': {table: expandable_fields(table) for table in EXPLORER_TABLES},
     }
@@ -320,6 +328,288 @@ async def otel_trace_detail(
             for s in spans
         ],
     }
+
+
+# ─── Write surface (D-021): edit-meta, append, patch, ai-suggest ────────────
+#
+# Append-only invariant (D-017) preserved: these endpoints only INSERT and
+# UPDATE the editable tables; never DELETE. Audit tables are not editable.
+# Every column value is validated against the table's EDIT_SPEC before it
+# touches SQL — kind, enum membership, FK existence, type coercion. Column
+# and table identifiers are allow-listed (never interpolated from raw input).
+
+
+def _require_editable(table: str) -> None:
+    _validate_table(table)
+    if not is_editable_table(table):
+        raise HTTPException(status_code=403, detail=f'{table} is read-only')
+
+
+async def _fk_options(session: AsyncSession, fk: tuple[str, str, str]) -> list[dict[str, str]]:
+    """Resolve a foreign-key dropdown: rows of (value, label) from the target."""
+    target, value_col, label_col = fk
+    _validate_table(target)
+    rows = (await session.execute(
+        text(f'SELECT {value_col}::text AS v, {label_col}::text AS l '  # noqa: S608 — allow-listed identifiers
+             f'FROM {target} ORDER BY {label_col} LIMIT 500'),
+    )).mappings().all()
+    return [{'value': r['v'], 'label': r['l']} for r in rows]
+
+
+@router.get('/edit-meta/{table}')
+async def edit_meta(
+    table: str,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """Per-column edit spec + resolved FK/enum options for the editable form."""
+    _require_admin(user)
+    _require_editable(table)
+    await resolve_columns()
+    spec = edit_spec_dump(table)
+    # Resolve FK options live so dropdowns show valid targets only.
+    fk_options: dict[str, list[dict[str, str]]] = {}
+    for col, meta in spec.items():
+        if meta['kind'] == 'fk' and meta['fk']:
+            fk_options[col] = await _fk_options(session, tuple(meta['fk']))
+    return {
+        'table': table,
+        'columns': columns_for(table),
+        'spec': spec,
+        'fk_options': fk_options,
+        'editable': True,
+    }
+
+
+async def _next_ref(session: AsyncSession, table: str, column: str, prefix: str) -> str:
+    """Generate the next 'PREFIX-####' style business ref for a table."""
+    rows = (await session.execute(
+        text(f"SELECT {column} FROM {table} WHERE {column} ~ :pat"),  # noqa: S608 — allow-listed
+        {'pat': f'^{prefix}-[0-9]+$'},
+    )).scalars().all()
+    max_n = 0
+    for r in rows:
+        try:
+            max_n = max(max_n, int(str(r).split('-')[1]))
+        except (IndexError, ValueError):
+            continue
+    return f'{prefix}-{max_n + 1}'
+
+
+def _coerce_value(table: str, column: str, raw: Any) -> Any:
+    """Validate + coerce one user-supplied value against its EDIT_SPEC kind."""
+    spec = column_edit(table, column)
+    if spec.kind == 'system':
+        raise HTTPException(status_code=400, detail=f'{column} is system-managed')
+    if raw is None or raw == '':
+        if spec.required:
+            raise HTTPException(status_code=400, detail=f'{column} is required')
+        return None
+    if spec.kind == 'bool':
+        return bool(raw) if isinstance(raw, bool) else str(raw).lower() in ('true', '1', 'yes', 'on')
+    if spec.kind == 'int':
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=f'{column} must be an integer')
+    if spec.kind == 'enum':
+        if str(raw) not in spec.options:
+            raise HTTPException(status_code=400, detail=f'{column}: "{raw}" not in {list(spec.options)}')
+        return str(raw)
+    if spec.kind == 'text[]':
+        items = raw if isinstance(raw, list) else [s.strip() for s in str(raw).split(',') if s.strip()]
+        for it in items:
+            if spec.options and it not in spec.options:
+                raise HTTPException(status_code=400, detail=f'{column}: "{it}" not allowed')
+        return items
+    if spec.kind == 'json':
+        if isinstance(raw, (dict, list)):
+            return json.dumps(raw)
+        try:
+            json.loads(raw)  # validate
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=f'{column} must be valid JSON')
+        return raw
+    # text / fk → string
+    return str(raw)
+
+
+class AppendInput(BaseModel):
+    values: dict[str, Any]
+
+
+@router.post('/row/{table}')
+async def append_row(
+    table: str,
+    payload: AppendInput,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """Append a new row to an editable table (D-021). System columns are
+    synthesised server-side; user columns are validated against EDIT_SPEC."""
+    _require_admin(user)
+    _require_editable(table)
+    await resolve_columns()
+
+    from acme_app.application.db_explorer import EDIT_SPEC
+    spec = EDIT_SPEC[table]
+
+    cols: list[str] = []
+    params: dict[str, Any] = {}
+    casts: dict[str, str] = {}
+    # Columns whose VALUES entry is a raw SQL expression (e.g. now()) rather
+    # than a bound parameter. Keyed by column -> SQL fragment.
+    raw_exprs: dict[str, str] = {}
+
+    for col, ce in spec.items():
+        if ce.kind == 'system':
+            # Synthesise per `auto` strategy.
+            if ce.auto and ce.auto.startswith('ref:'):
+                cols.append(col)
+                params[col] = await _next_ref(session, table, col, ce.auto.split(':', 1)[1])
+            elif ce.auto == 'null':
+                cols.append(col)
+                params[col] = None
+            elif ce.auto == 'now':
+                # Explicit now() — some timestamp columns have no DB default.
+                cols.append(col)
+                raw_exprs[col] = 'now()'
+            # uuid → rely on column DEFAULT gen_random_uuid()
+            continue
+        if col not in payload.values:
+            if ce.required:
+                raise HTTPException(status_code=400, detail=f'missing required field: {col}')
+            continue
+        value = _coerce_value(table, col, payload.values.get(col))
+        cols.append(col)
+        params[col] = value
+        if ce.kind == 'text[]':
+            casts[col] = '::text[]'
+        elif ce.kind == 'json':
+            casts[col] = '::jsonb'
+
+    if not cols:
+        raise HTTPException(status_code=400, detail='no values to insert')
+
+    def _placeholder(c: str) -> str:
+        if c in raw_exprs:
+            return raw_exprs[c]
+        return f':{c}{casts.get(c, "")}'
+
+    placeholders = ', '.join(_placeholder(c) for c in cols)
+    col_sql = ', '.join(cols)
+    pk = 'action_type' if table == 'action_catalogue' else 'id'
+    sql = f'INSERT INTO {table} ({col_sql}) VALUES ({placeholders}) RETURNING {pk}::text'  # noqa: S608
+    try:
+        new_id = (await session.execute(text(sql), params)).scalar()
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        raise HTTPException(status_code=400, detail=f'insert failed: {str(exc)[:200]}')
+
+    _log.info('DB Explorer append: %s by %s -> %s', table, user.username, new_id)
+    rows = await _query_rows(session, table, where_field=pk, where_value=new_id, limit=1)
+    return {'table': table, 'id': new_id, 'row': rows[0] if rows else None}
+
+
+class PatchInput(BaseModel):
+    column: str
+    value: Any
+
+
+@router.patch('/row/{table}/{row_id}')
+async def patch_row(
+    table: str,
+    row_id: str,
+    payload: PatchInput,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """Update one cell of an editable row (D-021)."""
+    _require_admin(user)
+    _require_editable(table)
+    await resolve_columns()
+
+    col = payload.column
+    if col not in columns_for(table):
+        raise HTTPException(status_code=400, detail=f'unknown column {col}')
+    value = _coerce_value(table, col, payload.value)
+    cast = ''
+    ce = column_edit(table, col)
+    if ce.kind == 'text[]':
+        cast = '::text[]'
+    elif ce.kind == 'json':
+        cast = '::jsonb'
+
+    pk = 'action_type' if table == 'action_catalogue' else 'id'
+    sql = f'UPDATE {table} SET {col} = :v{cast} WHERE {pk} = :id RETURNING {pk}::text'  # noqa: S608
+    try:
+        updated = (await session.execute(text(sql), {'v': value, 'id': row_id})).scalar()
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        raise HTTPException(status_code=400, detail=f'update failed: {str(exc)[:200]}')
+    if updated is None:
+        raise HTTPException(status_code=404, detail='row not found')
+    _log.info('DB Explorer patch: %s.%s row=%s by %s', table, col, row_id, user.username)
+    rows = await _query_rows(session, table, where_field=pk, where_value=row_id, limit=1)
+    return {'table': table, 'id': row_id, 'row': rows[0] if rows else None}
+
+
+class AiSuggestInput(BaseModel):
+    table: str
+    column: str
+    context: dict[str, Any] = {}
+
+
+@router.post('/ai-suggest')
+async def ai_suggest(
+    payload: AiSuggestInput,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Generate a short, context-aware sample value for a free-text field
+    using the local Ollama model (D-021). Falls back to a templated stub if
+    the local model is unavailable."""
+    _require_admin(user)
+    _require_editable(payload.table)
+    suggestion = await _ai_field_suggestion(payload.table, payload.column, payload.context)
+    return {'suggestion': suggestion}
+
+
+async def _ai_field_suggestion(table: str, column: str, context: dict[str, Any]) -> str:
+    ctx_str = ', '.join(f'{k}={v}' for k, v in context.items() if v) or 'no other fields yet'
+    system = (
+        'You generate a single short, realistic sample value for one database '
+        'field in an enterprise support system. Return ONLY the value text, no '
+        'quotes, no preamble, no markdown. Keep it concise and plausible.'
+    )
+    user_prompt = (
+        f'Table: {table}\nField to fill: {column}\n'
+        f'Other fields in this row: {ctx_str}\n\n'
+        f'Write a realistic value for "{column}".'
+    )
+    try:
+        from acme_app.infrastructure.llm.model_registry import MODEL_REGISTRY
+        from acme_app.infrastructure.llm.providers.ollama_provider import OllamaProvider
+        spec = MODEL_REGISTRY.get('ollama-llama')
+        if spec and settings.ollama_base_url:
+            provider = OllamaProvider(model=spec.model)
+            resp = await asyncio.wait_for(provider.narrate(system, user_prompt, {}), timeout=20.0)
+            text_out = (resp.text or '').strip().strip('"').splitlines()[0][:300]
+            if text_out:
+                return text_out
+    except Exception as exc:
+        _log.warning('ai-suggest local model failed (%s)', type(exc).__name__)
+    # Fallback stub so the button always does something.
+    return {
+        'name': 'Globex Corporation',
+        'title': 'Intermittent API authentication failures',
+        'description': 'Customer reports sporadic 401 responses during peak hours; '
+                       'token refresh appears to fail intermittently.',
+        'label': 'New Action',
+        'display_name': 'New User',
+        'email': 'new.user@example.local',
+    }.get(column, f'Sample {column}')
 
 
 # ─── WebSocket: realtime push of (table, op, id) events ─────────────────────

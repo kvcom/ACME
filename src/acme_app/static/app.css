@@ -40,6 +40,7 @@
      Used for: primary buttons, brand mark, selected state, action-proposed,
      trace-link affordance. NEVER blue per brief (overused in AI products). */
   --accent:            #d97757;
+  --accent-bright:     #e8906f;   /* lighter terracotta for active/hover + links */
   --accent-dim:        rgba(217, 119, 87, 0.85);
   --accent-bg:         rgba(217, 119, 87, 0.10);
   --accent-glow:       rgba(217, 119, 87, 0.22);

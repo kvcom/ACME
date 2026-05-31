@@ -516,6 +516,100 @@ async def test_create_plan_drops_customer_summary_skill_without_dependencies(mon
     assert plan.steps == []
 
 
+@pytest.mark.asyncio
+async def test_create_plan_profile_scope_keeps_only_customer_profile(monkeypatch):
+    from acme_app.infrastructure.llm.providers.base import LLMResponse
+
+    class _Provider:
+        async def plan(self, *_a, **_kw):
+            return LLMResponse(
+                text='{"intent":"customer_profile","steps":[]}',
+                prompt_tokens=10,
+                completion_tokens=2,
+                latency_ms=1,
+                model='local',
+                raw={
+                    'intent': 'customer_profile',
+                    'answer_scope': 'profile',
+                    'steps': [
+                        {
+                            'step_type': 'tool',
+                            'name': 'get_customer_profile',
+                            'arguments': {'customer_name': 'Skyline'},
+                            'rationale': 'identify customer',
+                        },
+                        {
+                            'step_type': 'tool',
+                            'name': 'get_open_issues',
+                            'arguments': {'customer_name': 'Skyline'},
+                            'rationale': 'extra status',
+                        },
+                        {
+                            'step_type': 'skill',
+                            'name': 'customer_escalation_summary',
+                            'arguments': {'customer_name': 'Skyline'},
+                            'rationale': 'extra risk summary',
+                        },
+                    ],
+                },
+            )
+
+    import acme_app.application.planner as planner_mod
+    monkeypatch.setattr(planner_mod, 'get_provider', lambda *_a, **_kw: _Provider())
+
+    plan, _resp = await create_plan('What is Skyline?', 'gpt-5.5', {'role': 'support_user'})
+
+    assert plan.answer_scope == 'profile'
+    assert [step.name for step in plan.steps] == ['get_customer_profile']
+
+
+@pytest.mark.asyncio
+async def test_create_plan_status_scope_drops_escalation_skill(monkeypatch):
+    from acme_app.infrastructure.llm.providers.base import LLMResponse
+
+    class _Provider:
+        async def plan(self, *_a, **_kw):
+            return LLMResponse(
+                text='{"intent":"customer_status","steps":[]}',
+                prompt_tokens=10,
+                completion_tokens=2,
+                latency_ms=1,
+                model='local',
+                raw={
+                    'intent': 'customer_status',
+                    'answer_scope': 'status',
+                    'steps': [
+                        {
+                            'step_type': 'tool',
+                            'name': 'get_customer_profile',
+                            'arguments': {'customer_name': 'Skyline'},
+                            'rationale': 'resolve customer',
+                        },
+                        {
+                            'step_type': 'tool',
+                            'name': 'get_open_issues',
+                            'arguments': {'customer_name': 'Skyline'},
+                            'rationale': 'retrieve issues',
+                        },
+                        {
+                            'step_type': 'skill',
+                            'name': 'customer_escalation_summary',
+                            'arguments': {'customer_name': 'Skyline'},
+                            'rationale': 'unneeded risk action',
+                        },
+                    ],
+                },
+            )
+
+    import acme_app.application.planner as planner_mod
+    monkeypatch.setattr(planner_mod, 'get_provider', lambda *_a, **_kw: _Provider())
+
+    plan, _resp = await create_plan('Status for Skyline', 'gpt-5.5', {'role': 'support_user'})
+
+    assert plan.answer_scope == 'status'
+    assert [step.name for step in plan.steps] == ['get_customer_profile', 'get_open_issues']
+
+
 def test_llm_unavailable_error_is_runtime_error():
     """The orchestrator catches it via the broad except clause."""
     err = LLMUnavailableError('no llm')

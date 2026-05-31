@@ -69,6 +69,7 @@ async def create_plan(query: str, provider_name: str, context: dict[str, Any]) -
             payload[key] = default
     _set('intent', 'unknown')
     _set('narration_kind', 'general')
+    _set('answer_scope', 'auto')
     _set('steps', [])
     _set('adversarial_flags', [])
     _set('write_requested', False)
@@ -96,10 +97,15 @@ async def create_plan(query: str, provider_name: str, context: dict[str, Any]) -
     seen_steps: set[tuple[str, str, str]] = set()
     customer_profile_names: set[str] = set()
     open_issue_names: set[str] = set()
+    answer_scope = str(getattr(plan, 'answer_scope', '') or '').strip().lower()
     for step in plan.steps:
         ok_step, _ = validate_step(step.step_type, step.name)
         ok_args, _ = validate_step_arguments(step.name, step.arguments)
         if ok_step and ok_args:
+            if answer_scope == 'profile' and step.name != 'get_customer_profile':
+                continue
+            if answer_scope == 'status' and step.name == 'customer_escalation_summary':
+                continue
             customer_name = str(step.arguments.get('customer_name') or '').strip().lower()
             if step.name == 'customer_escalation_summary':
                 if not customer_name or customer_name not in customer_profile_names or customer_name not in open_issue_names:

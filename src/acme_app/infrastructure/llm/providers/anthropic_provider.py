@@ -39,12 +39,29 @@ Writes (create / update actions or issues): do NOT include them as steps.
 Instead, plan recommend_next_action and set write_requested=true. The
 orchestrator stages a proposal that the user explicitly confirms.
 
-Default behaviour — prefer ACTION over clarification:
+Default behaviour — prefer the minimum evidence depth that answers the user:
   - If the user mentions any customer name (even a single word like
     "Northwind", "Contoso", "Skyline"), plan tool calls — do NOT ask for
     clarification.
-  - If the user asks an open question about a customer (e.g. "What's on with
-    Northwind?", "Brief me on Contoso", "Status of Skyline"), default to:
+  - First choose answer_scope:
+      profile       = identify/describe who the customer is. Use only
+                      get_customer_profile.
+      status        = explain current operational state or open work. Use
+                      get_customer_profile and get_open_issues.
+      risk_action   = rank urgency, explain escalation risk, recommend next
+                      steps, or prepare for a customer call. Use
+                      get_customer_profile, get_open_issues, and
+                      skill:customer_escalation_summary.
+      issue_action  = issue-specific next action/closure/write workflow.
+  - If the user is only asking what/who a customer is, or asks for a customer
+    profile/account profile, use answer_scope="profile" and do not call
+    get_open_issues or customer_escalation_summary.
+  - If the user asks about status/open issues/current situation without asking
+    for urgency, risk, escalation, or a recommendation, use answer_scope="status".
+  - If the user asks an action-oriented customer question (e.g. "What's going
+    on with Northwind?", "Brief me for my call with Contoso", "Which customer
+    is most urgent?", "What should we do next for Skyline?"), default to
+    answer_scope="risk_action":
         [get_customer_profile, get_open_issues, skill:customer_escalation_summary]
   - customer_escalation_summary is a dependent skill, not a data lookup. Never
     call it as the only step for a customer-status question. It must be
@@ -103,7 +120,8 @@ Respond with JSON only matching this schema:
     {"step_type": "tool"|"skill", "name": str, "arguments": object, "rationale": str}
   ],
   "write_requested": bool,
-  "narration_kind": str
+  "narration_kind": str,
+  "answer_scope": "profile"|"status"|"risk_action"|"issue_action"|"conversation"|"auto"
 }
 Produce no prose outside the JSON object."""
 

@@ -309,3 +309,36 @@ B was chosen. It removes the single-source-of-truth ambiguity (with A, two syste
 - Consider a *rules tester* page: pick a recommender, type some facts, see which rule would match. Hugely useful for operators editing rules without re-deploying chat traffic to test them.
 
 **Remaining skill data-drivening (out of scope, explicitly)**: a "full" data-driven skill layer would also move the *fact computation* (risk classification, missing-info detection) and *narrative templating* into tables. That's three more components — a domain-rules engine, a templating runtime, possibly a small DSL for declaring skill structure — and is genuinely a separate project. D-020 covers the recommendation half because that's where the value-per-line-of-code is highest: it's the half that ops asked for, and the half that gates "can a new action_type actually be used".
+
+
+## D-021 · Admin-editable DB Explorer (append + in-place edit, schema-driven)
+
+**Choice**: The DB Explorer is no longer read-only for a curated set of tables. Admins can append new records and edit existing cells directly in the UI for: `action_catalogue`, `action_recommendation_rules`, `customers`, `issues`, `issue_updates`, `users`, `user_roles`. These are tinted terracotta in the sidebar with a pencil mark. All other tables — the audit ledger (`agent_traces`, `trace_events`, `tool_call_logs`, `rbac_decisions`) and the eval tables — stay strictly read-only.
+
+**Why these tables**: They are the configuration + business-data + identity surfaces where manual amendment is meaningful and safe. Editing them is how an operator demonstrates the system's flexibility (add a customer → the agent answers about it; add an action type + a recommendation rule → the agent proposes it; deactivate a user → they lose access). The audit tables are excluded because editing them would forge the immutable decision record (D-017).
+
+**Editing model (per the demo requirements)**:
+- **Root-only**: only the table currently selected as root is editable. Child tables in a drill-down are read-only — to edit one you select it as root. Keeps the mental model simple and the write target unambiguous.
+- **Append**: a terracotta "+ Add record" button by the header opens an inline form. System fields (`id`, timestamps, `keycloak_subject`, business refs like `issue_ref`) are shown pre-filled/locked and synthesised server-side. Everything else is a control matched to the column type — booleans → toggle, fixed vocabularies (industry, tier, region, severity, status, side-effect level, role) → dropdown, FK columns → dropdown of valid target rows (resolved live), `TEXT[]` → multi-select chips, JSON → textarea. Minimum typing.
+- **AI assist**: every free-text field (`name`, `title`, `description`, `label`, `rationale_template`, `notes`, `conditions`, …) has a "✨ AI" button that calls the local Ollama model with the other field values as context and fills a realistic sample value. Starts on the local model (cost-free); can be switched to a paid provider later by changing one call site. Falls back to a templated stub if the local model is offline so the button always does something.
+- **Confirm/cancel** on the new-row form; **click-any-cell** in-place editing on existing rows with the same type-aware controls and ✓/✕ mini-buttons.
+- **Live reflection**: appends and edits flow through the existing realtime triggers (D-018), so a committed change flashes into the grid via the WebSocket — the same path external changes use. The form doesn't optimistically insert; it waits for the authoritative WS event.
+
+**Safety / implementation**:
+- **Schema-driven, not free-form**: a per-column `EDIT_SPEC` in `application/db_explorer.py` declares each column's kind, options, FK target, AI-eligibility, and auto-generation strategy. The UI and the API both read it. A column not in the spec is treated as read-only `system`.
+- **Server-side validation** in `routes_db_explorer.py`: `_coerce_value` enforces kind (bool/int/enum-membership/`TEXT[]`-membership/JSON-validity), rejects writes to system columns, and requires required fields. Table and column identifiers are allow-listed before any SQL; values are bound parameters or controlled raw expressions (`now()`, `gen_random_uuid()` default, generated refs). No identifier or value is interpolated raw from the request.
+- **Append-only invariant preserved (D-017)**: endpoints only `INSERT` and `UPDATE`. No DELETE path was added. Deactivation is done by editing `is_active`/`status`/`deleted_at`, not by removing rows.
+- **Admin-only**: all four new endpoints (`GET /db-explorer/edit-meta/{table}`, `POST /db-explorer/row/{table}`, `PATCH /db-explorer/row/{table}/{row_id}`, `POST /db-explorer/ai-suggest`) require the `admin` role and reject any non-editable table with 403.
+- Every append/patch is logged with the acting username.
+
+**Demo flows this unlocks**:
+- *Live data*: append "Globex Corporation" to `customers`, then ask the chat "What's going on with Globex?" — the agent answers from data typed seconds earlier.
+- *No-code behaviour change*: append an action type to `action_catalogue` + a rule to `action_recommendation_rules`, then watch the agent recommend a brand-new action (D-019 + D-020 propagate it live).
+- *Identity*: add a user + grant a role, or flip `is_active` to deactivate — reflects in the auth path on next login (D-016).
+
+**Production hardening (deferred)**:
+- Per-field-level RBAC (today it's all-or-nothing admin).
+- An edit audit table capturing who changed which cell from/to what (currently only the app log records it).
+- Optimistic-concurrency tokens to detect concurrent edits.
+- Swap the AI-assist model to a paid provider per field if local quality is insufficient (one call site).
+- For genuinely new *tables* (not rows), the registry is still code — making the table/relationship registry itself data-driven is a larger, separate step.

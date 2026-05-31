@@ -22,12 +22,19 @@
       padding: 6px 18px; font-family: var(--font-mono); font-size: 11px;
       color: var(--text-secondary); cursor: pointer; user-select: none;
       border-left: 2px solid transparent;
+      display: flex; align-items: center; justify-content: space-between; gap: 6px;
     }
     .sidebar li:hover { background: var(--bg-surface-raised); color: var(--text-primary); }
     .sidebar li.active {
-      color: var(--accent-bright); border-left-color: var(--accent-bright);
+      border-left-color: var(--accent-bright);
       background: var(--bg-surface);
     }
+    /* Editable tables (D-021) tinted terracotta with a pencil mark. */
+    .sidebar li.editable { color: var(--accent); }
+    .sidebar li.editable:hover { color: var(--accent-bright); }
+    .sidebar li.editable.active { color: var(--accent-bright); }
+    .sidebar li .edit-mark { font-size: 10px; opacity: 0.65; }
+    .sidebar li:not(.editable) .edit-mark { display: none; }
     /* .main is a fixed-height flex column. .main-header is pinned at the
        top; .grid-wrap is the one scrolling area, so position:sticky inside
        the table anchors cleanly to its top (top:0) and rows can't bleed
@@ -66,6 +73,81 @@
       padding: 80px 0; text-align: center; color: var(--text-muted);
       font-size: 13px; font-family: var(--font-ui);
     }
+
+    /* ── Edit / append UI (D-021) ────────────────────────────────────────── */
+    .add-row-btn {
+      margin-left: auto; margin-right: 14px;
+      background: var(--accent); color: #1a1206; border: 0;
+      border-radius: var(--radius-md); padding: 6px 12px; cursor: pointer;
+      font-family: var(--font-ui); font-size: 11px; font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+    .add-row-btn:hover { background: var(--accent-bright); }
+    /* The add-record form card sits at the top of the grid. */
+    .add-form {
+      border: 1px solid var(--accent-border); border-radius: var(--radius-md);
+      background: rgba(217,119,87,0.04); padding: 14px 16px; margin-bottom: 16px;
+    }
+    .add-form h4 {
+      font-family: var(--font-ui); font-size: 10px; font-weight: 600;
+      letter-spacing: 0.10em; text-transform: uppercase; color: var(--accent-bright);
+      margin: 0 0 12px;
+    }
+    .add-grid { display: grid; grid-template-columns: 150px 1fr; gap: 8px 14px; align-items: center; }
+    .add-grid label { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); }
+    .add-grid label .req { color: var(--accent); }
+    .field-wrap { display: flex; align-items: center; gap: 6px; }
+    .field-wrap input[type=text], .field-wrap input[type=number], .field-wrap select, .field-wrap textarea {
+      flex: 1; min-width: 0; background: var(--bg-base); color: var(--text-high);
+      border: 1px solid var(--border-medium); border-radius: 5px; padding: 5px 8px;
+      font-family: var(--font-mono); font-size: 11px;
+    }
+    .field-wrap textarea { resize: vertical; min-height: 34px; line-height: 1.4; }
+    .field-wrap select:focus, .field-wrap input:focus, .field-wrap textarea:focus {
+      outline: none; border-color: var(--accent-border);
+    }
+    .field-wrap.system input { color: var(--text-dim); font-style: italic; background: var(--bg-surface); }
+    .ai-btn {
+      flex: 0 0 auto; background: var(--color-info-bg); color: var(--color-info-dim);
+      border: 1px solid var(--border-medium); border-radius: 5px; padding: 5px 8px;
+      cursor: pointer; font-size: 11px; font-family: var(--font-mono);
+    }
+    .ai-btn:hover { background: var(--color-info-dim); color: var(--bg-base); }
+    .ai-btn.busy { opacity: 0.5; pointer-events: none; }
+    .multi-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+    .multi-chips label {
+      display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono);
+      font-size: 10px; color: var(--text-secondary); background: var(--bg-base);
+      border: 1px solid var(--border-medium); border-radius: var(--radius-full);
+      padding: 2px 8px; cursor: pointer;
+    }
+    .multi-chips label.on { background: var(--accent-bg); color: var(--accent-bright); border-color: var(--accent-border); }
+    .multi-chips input { display: none; }
+    .add-foot { margin-top: 14px; display: flex; gap: 8px; align-items: center; }
+    .btn-confirm {
+      background: var(--color-grounded-dim); color: var(--bg-base); border: 0;
+      border-radius: 5px; padding: 6px 14px; cursor: pointer; font-weight: 600;
+      font-family: var(--font-ui); font-size: 11px;
+    }
+    .btn-cancel {
+      background: transparent; color: var(--text-muted); border: 1px solid var(--border-medium);
+      border-radius: 5px; padding: 6px 14px; cursor: pointer; font-family: var(--font-ui); font-size: 11px;
+    }
+    .btn-confirm:hover { filter: brightness(1.1); }
+    .btn-cancel:hover { color: var(--text-primary); }
+    .add-err { color: var(--color-denied-dim); font-size: 11px; margin-left: 8px; }
+
+    /* Click-to-edit on existing cells */
+    .gtbl tr:not(.nested-host) td.editable-cell { cursor: pointer; }
+    .gtbl td.editable-cell:hover { background: rgba(217,119,87,0.06); }
+    .cell-editor { display: flex; align-items: center; gap: 4px; }
+    .cell-editor input, .cell-editor select, .cell-editor textarea {
+      background: var(--bg-base); color: var(--text-high); border: 1px solid var(--accent-border);
+      border-radius: 4px; padding: 3px 6px; font-family: var(--font-mono); font-size: 11px; min-width: 120px;
+    }
+    .cell-editor .mini { padding: 3px 6px; font-size: 10px; border-radius: 4px; cursor: pointer; border: 0; }
+    .cell-editor .mini.ok { background: var(--color-grounded-dim); color: var(--bg-base); }
+    .cell-editor .mini.no { background: var(--bg-surface-raised); color: var(--text-muted); }
 
     /* Tables */
     /* Root table: min-width:100% fills the panel; width:max-content lets it
@@ -267,6 +349,7 @@
       <div class="main-header">
         <h1 id="root-title">Pick a table to start</h1>
         <span class="hint" id="root-hint">Click any <b>+</b> next to a value to drill into its related rows.</span>
+        <button id="add-row-btn" class="add-row-btn" style="display:none;" title="Add a new record">+ Add record</button>
         <span class="live-pill" id="live-pill" title="WebSocket connection status">
           <span class="label" id="live-text">offline</span>
           <span class="led"></span>
@@ -294,11 +377,21 @@
     const activeLi = tableList.querySelector('li.active');
     const previouslyActive = activeLi ? activeLi.dataset.table : null;
 
+    const editable = new Set(META.editable_tables || []);
     tableList.innerHTML = '';
     for (const t of META.tables) {
       const li = document.createElement('li');
       li.textContent = t;
       li.dataset.table = t;
+      // Editable tables are tinted terracotta and carry a small pencil mark
+      // so the user knows which ones can be amended (D-021).
+      if (editable.has(t)) {
+        li.classList.add('editable');
+        const mark = document.createElement('span');
+        mark.className = 'edit-mark';
+        mark.textContent = '✎';
+        li.appendChild(mark);
+      }
       if (t === previouslyActive) li.classList.add('active');
       li.addEventListener('click', () => selectRoot(t));
       tableList.appendChild(li);
@@ -372,8 +465,10 @@
     return `<button class="otel-btn" data-otel="${v}" data-otel-url="/db-explorer/otel/${encodeURIComponent(val)}" title="View OpenTelemetry trace timeline">⌕</button>`;
   }
 
-  function renderTable(table, columns, rows, links, ancestors, filter) {
+  function renderTable(table, columns, rows, links, ancestors, filter, editableCols) {
     const ancestorSet = new Set(ancestors || []);
+    const editable = editableCols instanceof Set ? editableCols : null;
+    const pkCol = table === 'action_catalogue' ? 'action_type' : 'id';
     const wrap = document.createElement('div');
     wrap.className = 'nested-group-tbl-wrap';
     // Record the drill path on the wrap itself so the click handler can read
@@ -448,6 +543,14 @@
             ? `<button class="expand-btn" data-table="${table}" data-field="${c}" data-value="${escapeAttr(String(val))}" title="${escapeAttr(fieldLinks.map(l => l.label).join(' · '))}">+</button>`
             : ''
         ) + otelButton(c, val) + `</span>`;
+        // Click-to-edit (D-021): only on the root table, only for columns the
+        // edit spec marks editable. Carries the row PK so PATCH can target it.
+        if (editable && editable.has(c)) {
+          td.classList.add('editable-cell');
+          td.dataset.editCol = c;
+          td.dataset.editPk = rawString(row[pkCol]);
+          td.title = (fullText ? fullText + ' · ' : '') + 'click to edit';
+        }
         tr.appendChild(td);
       }
       tbody.appendChild(tr);
@@ -811,12 +914,26 @@
   connectLive();
 
   // ─── Root table selection ────────────────────────────────────────────────
+  function isEditable(table) { return (META.editable_tables || []).includes(table); }
+
   async function selectRoot(table) {
     currentRoot = table;
     for (const li of tableList.children) li.classList.toggle('active', li.dataset.table === table);
     document.getElementById('root-title').textContent = table;
+    // Show the Add-record button only for editable root tables.
+    const addBtn = document.getElementById('add-row-btn');
+    addBtn.style.display = isEditable(table) ? '' : 'none';
     const grid = document.getElementById('root-grid');
     grid.innerHTML = '<div class="loading">Loading…</div>';
+    // Prefetch the edit spec for editable tables so cells can be made
+    // click-to-edit and the add-form can reuse it.
+    rootEditMeta = null;
+    if (isEditable(table)) {
+      try {
+        const mr = await fetch(`/db-explorer/edit-meta/${encodeURIComponent(table)}`);
+        if (mr.ok) rootEditMeta = await mr.json();
+      } catch (_) { rootEditMeta = null; }
+    }
     try {
       const resp = await fetch(`/db-explorer/rows/${encodeURIComponent(table)}`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -827,11 +944,243 @@
       headline.id = 'root-count';
       headline.innerHTML = `<b>${data.row_count}</b> rows (showing first ${data.row_count})`;
       grid.appendChild(headline);
+      // editableCols = columns whose spec kind is not 'system'.
+      let editableCols = null;
+      if (rootEditMeta) {
+        editableCols = new Set(Object.entries(rootEditMeta.spec)
+          .filter(([, m]) => m.kind !== 'system').map(([c]) => c));
+      }
       // Root call seeds the ancestor list with just the root table and has
       // no filter — it shows everything in the table.
-      grid.appendChild(renderTable(data.table, data.columns, data.rows, data.links, [data.table], null));
+      grid.appendChild(renderTable(data.table, data.columns, data.rows, data.links, [data.table], null, editableCols));
     } catch (err) {
       grid.innerHTML = `<div class="err">Failed to load: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+  let rootEditMeta = null;
+
+  // ─── Click-to-edit existing cells (D-021) ────────────────────────────────
+  document.getElementById('root-grid').addEventListener('click', (e) => {
+    const td = e.target.closest('td.editable-cell');
+    if (!td) return;
+    // Ignore clicks on the +/⌕ buttons inside the cell, or if already editing.
+    if (e.target.closest('.expand-btn, .otel-btn') || td.querySelector('.cell-editor')) return;
+    openCellEditor(td);
+  });
+
+  function openCellEditor(td) {
+    if (!rootEditMeta) return;
+    const col = td.dataset.editCol;
+    const pk = td.dataset.editPk;
+    const m = rootEditMeta.spec[col];
+    if (!m || m.kind === 'system') return;
+    const original = td.innerHTML;
+    const currentText = (td.title || '').replace(/ · click to edit$/, '').replace(/click to edit$/, '');
+
+    const ed = document.createElement('span');
+    ed.className = 'cell-editor';
+    let getVal;
+
+    if (m.kind === 'bool' || m.kind === 'enum' || m.kind === 'fk') {
+      const sel = document.createElement('select');
+      if (m.kind === 'bool') {
+        sel.innerHTML = '<option value="true">true</option><option value="false">false</option>';
+      } else if (m.kind === 'enum') {
+        if (!m.required) sel.innerHTML = '<option value=""></option>';
+        for (const o of m.options) sel.innerHTML += `<option value="${escapeAttr(o)}">${escapeHtml(o)}</option>`;
+      } else { // fk
+        sel.innerHTML = '<option value="">— select —</option>';
+        for (const o of (rootEditMeta.fk_options[col] || [])) sel.innerHTML += `<option value="${escapeAttr(o.value)}">${escapeHtml(o.label)}</option>`;
+      }
+      ed.appendChild(sel); getVal = () => sel.value;
+    } else {
+      const inp = document.createElement('input');
+      inp.type = m.kind === 'int' ? 'number' : 'text';
+      inp.value = currentText.trim();
+      ed.appendChild(inp); getVal = () => inp.value;
+      setTimeout(() => inp.focus(), 0);
+    }
+    const ok = document.createElement('button'); ok.className = 'mini ok'; ok.textContent = '✓';
+    const no = document.createElement('button'); no.className = 'mini no'; no.textContent = '✕';
+    ed.appendChild(ok); ed.appendChild(no);
+
+    td.innerHTML = ''; td.appendChild(ed);
+    no.addEventListener('click', (ev) => { ev.stopPropagation(); td.innerHTML = original; });
+    ok.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      ok.textContent = '…';
+      try {
+        const resp = await fetch(`/db-explorer/row/${encodeURIComponent(currentRoot)}/${encodeURIComponent(pk)}`, {
+          method: 'PATCH', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ column: col, value: getVal() }),
+        });
+        const d = await resp.json();
+        if (!resp.ok) throw new Error(d.detail || `HTTP ${resp.status}`);
+        // The WS UPDATE event will refresh the row+cell with a flash; just
+        // restore for now so there's no flicker gap.
+        td.innerHTML = original;
+      } catch (err) {
+        ok.textContent = '✓';
+        td.title = String(err.message);
+        ed.style.outline = '1px solid var(--color-denied-dim)';
+      }
+    });
+  }
+
+  // ─── Append: the "+ Add record" form (D-021) ─────────────────────────────
+  document.getElementById('add-row-btn').addEventListener('click', () => openAddForm(currentRoot));
+
+  function fieldInput(table, col, meta, fkOptions) {
+    // Returns {el, get} — the input element and a getter for its value.
+    const wrap = document.createElement('div');
+    wrap.className = 'field-wrap';
+    if (meta.kind === 'system') {
+      wrap.classList.add('system');
+      const inp = document.createElement('input');
+      inp.type = 'text'; inp.disabled = true;
+      inp.value = meta.auto === 'now' ? '(auto: now)'
+        : meta.auto === 'uuid' ? '(auto: generated id)'
+        : meta.auto && meta.auto.startsWith('ref:') ? '(auto: next ref)'
+        : '(auto)';
+      wrap.appendChild(inp);
+      return { wrap, get: () => undefined, skip: true };
+    }
+    if (meta.kind === 'bool') {
+      const sel = document.createElement('select');
+      sel.innerHTML = '<option value="true">true</option><option value="false">false</option>';
+      wrap.appendChild(sel);
+      return { wrap, get: () => sel.value === 'true' };
+    }
+    if (meta.kind === 'enum') {
+      const sel = document.createElement('select');
+      if (!meta.required) sel.innerHTML = '<option value=""></option>';
+      for (const o of meta.options) sel.innerHTML += `<option value="${escapeAttr(o)}">${escapeHtml(o)}</option>`;
+      wrap.appendChild(sel);
+      return { wrap, get: () => sel.value };
+    }
+    if (meta.kind === 'fk') {
+      const sel = document.createElement('select');
+      sel.innerHTML = '<option value="">— select —</option>';
+      for (const o of (fkOptions[col] || [])) sel.innerHTML += `<option value="${escapeAttr(o.value)}">${escapeHtml(o.label)}</option>`;
+      wrap.appendChild(sel);
+      return { wrap, get: () => sel.value };
+    }
+    if (meta.kind === 'text[]') {
+      const box = document.createElement('div');
+      box.className = 'multi-chips';
+      for (const o of meta.options) {
+        const lab = document.createElement('label');
+        lab.innerHTML = `<input type="checkbox" value="${escapeAttr(o)}">${escapeHtml(o)}`;
+        lab.querySelector('input').addEventListener('change', e => lab.classList.toggle('on', e.target.checked));
+        box.appendChild(lab);
+      }
+      wrap.appendChild(box);
+      return { wrap, get: () => Array.from(box.querySelectorAll('input:checked')).map(i => i.value) };
+    }
+    // text / json → textarea (json) or input (text), with optional AI button.
+    const isLong = meta.kind === 'json' || ['description','update_text','rationale_template','notes','conditions'].includes(col);
+    const inp = document.createElement(isLong ? 'textarea' : 'input');
+    if (!isLong) inp.type = 'text';
+    if (meta.placeholder) inp.placeholder = meta.placeholder;
+    wrap.appendChild(inp);
+    if (meta.ai) {
+      const ai = document.createElement('button');
+      ai.type = 'button'; ai.className = 'ai-btn'; ai.textContent = '✨ AI'; ai.title = 'Suggest a value';
+      ai.addEventListener('click', async () => {
+        ai.classList.add('busy'); ai.textContent = '…';
+        try {
+          const ctx = collectContext();
+          const r = await fetch('/db-explorer/ai-suggest', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ table, column: col, context: ctx }),
+          });
+          const d = await r.json();
+          if (d.suggestion) inp.value = d.suggestion;
+        } catch (_) {}
+        ai.classList.remove('busy'); ai.textContent = '✨ AI';
+      });
+      wrap.appendChild(ai);
+    }
+    return { wrap, get: () => inp.value };
+  }
+
+  let _formGetters = {};
+  function collectContext() {
+    // Snapshot current field values so AI suggestions are context-aware.
+    const ctx = {};
+    for (const [c, g] of Object.entries(_formGetters)) {
+      try { const v = g(); if (v) ctx[c] = v; } catch (_) {}
+    }
+    return ctx;
+  }
+
+  async function openAddForm(table) {
+    if (!table || !isEditable(table)) return;
+    const grid = document.getElementById('root-grid');
+    let existing = document.getElementById('add-form');
+    if (existing) existing.remove();
+
+    const form = document.createElement('div');
+    form.className = 'add-form'; form.id = 'add-form';
+    form.innerHTML = `<h4>New ${escapeHtml(table)} record</h4><div class="loading">Loading form…</div>`;
+    grid.insertBefore(form, grid.firstChild);
+
+    let meta;
+    try {
+      const resp = await fetch(`/db-explorer/edit-meta/${encodeURIComponent(table)}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      meta = await resp.json();
+    } catch (err) {
+      form.innerHTML = `<div class="err">Could not load form: ${escapeHtml(err.message)}</div>`;
+      return;
+    }
+
+    _formGetters = {};
+    const gridEl = document.createElement('div');
+    gridEl.className = 'add-grid';
+    for (const col of meta.columns) {
+      const m = meta.spec[col];
+      if (!m) continue;  // not in edit spec → skip
+      const label = document.createElement('label');
+      label.innerHTML = `${escapeHtml(col)}${m.required && m.kind !== 'system' ? ' <span class="req">*</span>' : ''}`;
+      const fi = fieldInput(table, col, m, meta.fk_options || {});
+      if (!fi.skip) _formGetters[col] = fi.get;
+      gridEl.appendChild(label);
+      gridEl.appendChild(fi.wrap);
+    }
+    form.innerHTML = `<h4>New ${escapeHtml(table)} record</h4>`;
+    form.appendChild(gridEl);
+    const foot = document.createElement('div');
+    foot.className = 'add-foot';
+    foot.innerHTML = `<button class="btn-confirm">Confirm — add record</button><button class="btn-cancel">Cancel</button><span class="add-err"></span>`;
+    form.appendChild(foot);
+    foot.querySelector('.btn-cancel').addEventListener('click', () => form.remove());
+    foot.querySelector('.btn-confirm').addEventListener('click', () => submitAddForm(table, form));
+  }
+
+  async function submitAddForm(table, form) {
+    const errEl = form.querySelector('.add-err');
+    errEl.textContent = '';
+    const values = {};
+    for (const [c, g] of Object.entries(_formGetters)) {
+      const v = g();
+      if (v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0)) values[c] = v;
+    }
+    const btn = form.querySelector('.btn-confirm');
+    btn.disabled = true; btn.textContent = 'Adding…';
+    try {
+      const resp = await fetch(`/db-explorer/row/${encodeURIComponent(table)}`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ values }),
+      });
+      const d = await resp.json();
+      if (!resp.ok) throw new Error(d.detail || `HTTP ${resp.status}`);
+      // Success — remove the form. The realtime WS INSERT event will flash
+      // the new row into the table on its own, so we don't insert it here.
+      form.remove();
+    } catch (err) {
+      errEl.textContent = String(err.message);
+      btn.disabled = false; btn.textContent = 'Confirm — add record';
     }
   }
 </script>

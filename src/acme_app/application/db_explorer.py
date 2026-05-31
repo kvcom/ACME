@@ -352,3 +352,155 @@ def columns_for(table: str) -> list[str]:
     awaited resolve_columns() earlier in the same request. Falls back to the
     hint (or, ultimately, an empty list) when the cache is cold."""
     return _LIVE_COLUMNS.get(table) or list(TABLE_COLUMNS.get(table, []))
+
+
+# ── Editability spec (D-021) ─────────────────────────────────────────────────
+# Which tables can be edited/appended from the DB Explorer, and how each column
+# is edited. Audit tables (agent_traces, trace_events, tool_call_logs,
+# rbac_decisions) and eval_* are NOT here — they stay read-only (D-017).
+#
+# Column kinds the UI understands:
+#   system  — auto-generated, never user-editable (id, created_at, ...).
+#   bool    — toggle true/false.
+#   enum    — fixed dropdown; `options` lists the choices.
+#   fk      — dropdown of rows from another table; `fk` = (table, value_col,
+#             label_col). Options resolved live by the API.
+#   text    — free text. `ai` = True adds the "AI suggest" button.
+#   text[]  — multi-select of `options` (Postgres TEXT[] column).
+#   json    — JSON object/array, edited as text (with validation).
+#   int     — integer input.
+#
+# `auto` on a system column = server-synth strategy on append:
+#   uuid | now | null | ref:ISS  (ref:ISS -> next ISS-#### style ref)
+
+
+@dataclass(frozen=True)
+class ColumnEdit:
+    kind: str                              # system|bool|enum|fk|text|text[]|json|int
+    options: tuple[str, ...] = ()
+    fk: tuple[str, str, str] | None = None  # (table, value_col, label_col)
+    ai: bool = False
+    auto: str | None = None
+    required: bool = True
+    placeholder: str = ''
+
+
+_ROLES = ('sales_user', 'support_user', 'admin')
+_SEVERITY = ('P1', 'P2', 'P3', 'P4')
+_ISSUE_STATUS = ('Open', 'In Progress', 'Waiting for Customer', 'Escalated', 'Resolved', 'Closed')
+_SLA = ('Within SLA', 'At Risk', 'Breached')
+_PRIORITY = ('Low', 'Medium', 'High', 'Critical')
+_SIDE_EFFECT = ('low', 'medium', 'high')
+_INDUSTRY = ('Energy', 'Retail', 'Logistics', 'Manufacturing', 'Healthcare',
+             'Aerospace', 'Finance', 'Telecom', 'Technology', 'Public Sector')
+_TIER = ('Enterprise', 'Mid-market', 'Strategic', 'SMB')
+_REGION = ('UK', 'Netherlands', 'Germany', 'France', 'US', 'Ireland', 'Spain', 'Nordics')
+_TIMEZONE = ('Europe/London', 'Europe/Amsterdam', 'Europe/Berlin', 'Europe/Paris',
+             'Europe/Madrid', 'Europe/Dublin', 'America/New_York', 'UTC')
+_CUSTOMER_STATUS = ('active', 'archived')
+_UPDATE_TYPE = ('customer_update', 'engineering_update', 'internal_note')
+_RECOMMENDER = ('recommend_next_action_tool', 'customer_escalation_summary', 'closure_readiness_check')
+_REQUIRED_FIELDS = ('owner_name', 'description', 'due_at', 'issue_ref', 'new_status')
+
+
+EDIT_SPEC: dict[str, dict[str, 'ColumnEdit']] = {
+    'action_catalogue': {
+        'action_type':           ColumnEdit('text', placeholder='UPPER_SNAKE_CASE, e.g. REQUEST_LEGAL_REVIEW'),
+        'label':                 ColumnEdit('text', ai=True, placeholder='Human label'),
+        'description':           ColumnEdit('text', ai=True, placeholder='What this action does'),
+        'allowed_roles':         ColumnEdit('text[]', options=_ROLES),
+        'required_fields':       ColumnEdit('text[]', options=_REQUIRED_FIELDS, required=False),
+        'side_effect_level':     ColumnEdit('enum', options=_SIDE_EFFECT),
+        'requires_confirmation': ColumnEdit('bool'),
+        'is_active':             ColumnEdit('bool'),
+    },
+    'action_recommendation_rules': {
+        'id':                    ColumnEdit('system', auto='uuid'),
+        'rule_ref':              ColumnEdit('text', placeholder='e.g. rule:legal_review'),
+        'recommender':           ColumnEdit('enum', options=_RECOMMENDER),
+        'priority_order':        ColumnEdit('int', placeholder='lower = checked first'),
+        'conditions':            ColumnEdit('json', ai=True, required=False, placeholder='{"severity":"P1"}'),
+        'action_type':           ColumnEdit('fk', fk=('action_catalogue', 'action_type', 'label')),
+        'recommended_priority':  ColumnEdit('enum', options=_PRIORITY),
+        'rationale_template':    ColumnEdit('text', ai=True, required=False),
+        'is_active':             ColumnEdit('bool'),
+        'notes':                 ColumnEdit('text', ai=True, required=False),
+        'created_at':            ColumnEdit('system', auto='now'),
+    },
+    'customers': {
+        'id':                    ColumnEdit('system', auto='uuid'),
+        'name':                  ColumnEdit('text', ai=True, placeholder='Company name'),
+        'industry':              ColumnEdit('enum', options=_INDUSTRY),
+        'tier':                  ColumnEdit('enum', options=_TIER),
+        'region':                ColumnEdit('enum', options=_REGION),
+        'customer_timezone':     ColumnEdit('enum', options=_TIMEZONE),
+        'account_owner':         ColumnEdit('text', required=False, placeholder='Owner name'),
+        'status':                ColumnEdit('enum', options=_CUSTOMER_STATUS),
+        'created_at':            ColumnEdit('system', auto='now'),
+    },
+    'issues': {
+        'id':                    ColumnEdit('system', auto='uuid'),
+        'issue_ref':             ColumnEdit('system', auto='ref:ISS'),
+        'customer_id':           ColumnEdit('fk', fk=('customers', 'id', 'name')),
+        'title':                 ColumnEdit('text', ai=True, placeholder='Short issue title'),
+        'description':           ColumnEdit('text', ai=True, placeholder='Issue description'),
+        'severity':              ColumnEdit('enum', options=_SEVERITY),
+        'status':                ColumnEdit('enum', options=_ISSUE_STATUS),
+        'sla_status':            ColumnEdit('enum', options=_SLA),
+        'owner':                 ColumnEdit('text', required=False, placeholder='Owner name'),
+        'opened_at':             ColumnEdit('system', auto='now'),
+        'updated_at':            ColumnEdit('system', auto='now'),
+    },
+    'issue_updates': {
+        'id':                    ColumnEdit('system', auto='uuid'),
+        'issue_id':              ColumnEdit('fk', fk=('issues', 'id', 'issue_ref')),
+        'update_text':           ColumnEdit('text', ai=True, placeholder='Update note'),
+        'update_type':           ColumnEdit('enum', options=_UPDATE_TYPE),
+        'created_by':            ColumnEdit('text', required=False, placeholder='author'),
+        'created_at':            ColumnEdit('system', auto='now'),
+    },
+    'users': {
+        'id':                    ColumnEdit('system', auto='uuid'),
+        'username':              ColumnEdit('text', placeholder='e.g. jane.doe'),
+        'email':                 ColumnEdit('text', ai=True, required=False, placeholder='name@example.local'),
+        'display_name':          ColumnEdit('text', ai=True, required=False, placeholder='Full name'),
+        'keycloak_subject':      ColumnEdit('system', auto='null'),
+        'is_active':             ColumnEdit('bool'),
+        'created_at':            ColumnEdit('system', auto='now'),
+        'deleted_at':            ColumnEdit('system', auto='null'),
+    },
+    'user_roles': {
+        'id':                    ColumnEdit('system', auto='uuid'),
+        'user_id':               ColumnEdit('fk', fk=('users', 'id', 'username')),
+        'role_name':             ColumnEdit('enum', options=_ROLES),
+        'is_active':             ColumnEdit('bool'),
+        'granted_at':            ColumnEdit('system', auto='now'),
+        'granted_by':            ColumnEdit('text', required=False, placeholder='admin'),
+        'revoked_at':            ColumnEdit('system', auto='null'),
+        'revoked_by':            ColumnEdit('system', auto='null'),
+    },
+}
+
+EDITABLE_TABLES: list[str] = list(EDIT_SPEC.keys())
+
+
+def is_editable_table(table: str) -> bool:
+    return table in EDIT_SPEC
+
+
+def column_edit(table: str, column: str) -> 'ColumnEdit':
+    """Edit spec for one column; unknown columns default to read-only system."""
+    return EDIT_SPEC.get(table, {}).get(column, ColumnEdit('system'))
+
+
+def edit_spec_dump(table: str) -> dict[str, dict[str, Any]]:
+    """Serialise a table's edit spec for the frontend (FK options resolved
+    live by the API, not here)."""
+    out: dict[str, dict[str, Any]] = {}
+    for col, spec in EDIT_SPEC.get(table, {}).items():
+        out[col] = {
+            'kind': spec.kind, 'options': list(spec.options),
+            'fk': list(spec.fk) if spec.fk else None, 'ai': spec.ai,
+            'auto': spec.auto, 'required': spec.required, 'placeholder': spec.placeholder,
+        }
+    return out
