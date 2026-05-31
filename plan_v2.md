@@ -19,13 +19,12 @@ This version closes gaps that an experienced FDE panel would probe. The new or u
 - Streaming agent plan (SSE) replaces single-shot POST for the chat experience
 - Propose-then-confirm write flow makes "AI recommends, policy executes" visible in the UX
 - Persistent conversation list (PostgreSQL) backs the Redis short-term memory
-- PII redaction stub is wired into trace logging
-- Provider switch (Anthropic / OpenAI / Ollama stub) demoable on stage
+- PII redaction is wired into trace logging (regex redactor, optionally complemented by a local LLM)
+- Model picker (Anthropic / OpenAI / Google / local Ollama) demoable on stage — pick any registered model per turn
 - Idempotency on create_next_action prevents duplicate writes on retry
 - Evaluation methodology is documented, variance is reported across 3 runs
 - ARCHITECTURE.md and FAILURE_MODES.md are explicit deliverables with templates
-- Design Lineage section in README explicitly names patterns borrowed from Nabu One, myTbot, Up & Loud and Barescope
-- Decision Log replaces ad-hoc trade-off notes
+- Decision Log records every design trade-off as it was made
 - prompts/ folder captures actual prompts given to Cursor / Claude Code / Codex / Antigravity
 - Repository hygiene (ruff, black, mypy, pre-commit, UTF-8 no-BOM enforcement)
 - Determinism note: risk classification is rule-based, LLM only narrates
@@ -106,7 +105,7 @@ If PostgreSQL is lost, the business record is unavailable.
 
 ## 2.3 AI recommends, policy executes
 
-Borrowed from the myTbot safety pattern: AI advises and explains, but deterministic controls execute. In myTbot, AI can score and explain, but cannot place orders or override risk gates.
+The core safety principle of this prototype: AI advises and explains, but deterministic controls execute. The LLM can interpret, plan, summarise and recommend, but it can never perform a side-effecting write on its own — that always passes through a non-LLM policy gate and (for writes) an explicit human confirmation.
 
 For Acme:
 
@@ -130,7 +129,7 @@ AI cannot:
 
 ## 2.4 Evidence first
 
-Borrowed from the Up & Loud evidence-first model, where evidence is treated as a first-class data type and every claim is linked to supporting artefacts.
+Evidence is treated as a first-class data type in this prototype: every claim the assistant makes is linked to the supporting records and the tools that retrieved them.
 
 For Acme, every final answer must expose:
 
@@ -146,7 +145,7 @@ A claim without an evidence reference is flagged in the UI as "Insufficient Evid
 
 ## 2.5 Decision Ledger
 
-Borrowed from the Nabu One governance model, where every action records who acted, why, based on what data and with what impact.
+A governance principle of this prototype: every agent action records who acted, why, on what data, under what permissions, and with what outcome — an immutable, append-only record.
 
 For Acme:
 
@@ -169,7 +168,7 @@ src/acme_app/
   api/           # FastAPI routes
 ```
 
-This mirrors the Nabu One Phase 0 principle of using a modular monolith with event-driven boundaries rather than unnecessary microservices from day one. The directory layout exists to make the boundary visible, not just claimed.
+The prototype uses a modular monolith with explicit internal boundaries rather than unnecessary microservices from day one. The directory layout exists to make the boundary visible, not just claimed, so individual modules can be extracted into services later without re-architecting.
 
 ## 2.7 Adversarial inputs are untrusted
 
@@ -209,23 +208,22 @@ This is documented in the README so the panel does not assume variance is sloppi
 
 ---
 
-# 3. Design lineage
+# 3. Design principles in practice
 
-This is the section to add at the top of the README and to reference verbally on the panel.
+The architectural ideas below are the load-bearing decisions of this prototype. Each is summarised here and reflected verbatim in the code; the README opens with the same summary.
 
-| Pattern in this MVP                              | Origin            | What it does here                                                                                            |
-| ------------------------------------------------ | ----------------- | ------------------------------------------------------------------------------------------------------------ |
-| Decision Ledger                                  | Nabu One          | Every agent action records who, why, on what evidence, with what RBAC outcome. Stored across `agent_traces`, `trace_events`, `rbac_decisions`. |
-| Modular monolith with event-driven boundaries    | Nabu One Phase 0  | One FastAPI app, internal `domain`/`application`/`infrastructure` split, extractable later.                  |
-| Governance envelope and autonomy levels          | Nabu One          | Observe → Suggest → Act-with-approval → Autonomous. MVP operates at Suggest and Act-with-approval.           |
-| AI advises, rules execute                        | myTbot            | LLM produces plans and recommendations; deterministic policy executes writes. RBAC and action catalogue are non-LLM gates. |
-| Multi-model adjudication                         | myTbot            | Documented as future extension; provider abstraction in place but not active in MVP.                         |
-| Adapter isolation                                | myTbot            | LLM provider, MCP client and Keycloak validator each behind a clean interface.                               |
-| Evidence as first-class data                     | Up & Loud         | Every claim links to an evidence list; "Insufficient Evidence" is a visible decision badge.                  |
-| Verification status badges                       | Barescope         | Grounded / Partially Grounded / Needs Review / Permission Denied / Action Created / Insufficient Evidence / Clarification Required. |
-| Proof without storing sensitive payloads         | Barescope         | Trace stores tool output **summaries**, not raw record dumps; PII redactor on user_query field.              |
+| Pattern                                          | What it does here                                                                                            |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| Decision Ledger                                  | Every agent action records who, why, on what evidence, with what RBAC outcome. Stored across `agent_traces`, `trace_events`, `rbac_decisions`, `tool_call_logs`. Append-only — rows are never deleted (see §8.0). |
+| Modular monolith with explicit boundaries        | One FastAPI app, internal `domain`/`application`/`infrastructure`/`api` split, extractable into services later. |
+| Governance envelope and autonomy levels          | Observe → Suggest → Act-with-approval → Autonomous. The prototype operates at Suggest and Act-with-approval; it never auto-executes a write. |
+| AI advises, rules execute                        | The LLM produces plans, recommendations and narration; deterministic policy executes writes. RBAC and the action catalogue are non-LLM gates. |
+| Adapter isolation                                | LLM provider, MCP client and Keycloak validator each sit behind a clean interface, so any one can be swapped without touching the agent loop. |
+| Evidence as first-class data                     | Every claim links to an evidence list; "Insufficient Evidence" is a visible decision badge. The trace viewer renders an Evidence-to-Action graph. |
+| Verification status badges                       | Grounded / Partially Grounded / Needs Review / Permission Denied / Action Proposed / Action Created / Insufficient Evidence / Clarification Required. |
+| Proof without storing sensitive payloads         | Traces store tool-output **summaries**, not raw record dumps; a PII redactor scrubs the `user_query` field before it is persisted. |
 
-The README opens with a short "Design Lineage" paragraph (see section 22) that names the four prior projects.
+The synthesis of these is the **Evidence-to-Action Decision Graph**: every AI-assisted decision records who acted, why, on what evidence, under what permissions, and with what outcome.
 
 ---
 
@@ -259,21 +257,20 @@ OpenTelemetry Collector
 
 ## LLM
 
-External API model for the core demo, with provider abstraction:
+A model registry exposes several real, working providers behind one abstraction. The user picks a specific model per turn from a dropdown:
 
 ```text
-LLM_PROVIDER=anthropic | openai | ollama
-LLM_MODEL=...
+Anthropic   — Claude (Opus / Sonnet)
+OpenAI      — GPT family
+Google      — Gemini (Pro / Flash)
+Ollama      — local models on the host (no API key, no per-token cost)
 ```
 
-Use Anthropic or OpenAI as the primary; Ollama provider exists as a stub that documents how it would be wired. Provider abstraction is real and demoable: a 30-second segment of the demo flips the provider and reruns the same query.
+Each provider implements the same `plan()` / `narrate()` interface, so the agent loop is provider-agnostic. Provider switching is real and demoable: a 30-second segment of the demo picks a different model and reruns the same query, and the trace records exactly which model handled the plan and the narration, with token counts and cost.
 
-Document future extension:
+The local Ollama path means the system can run end-to-end with **zero external API cost** — useful for private deployments and for the AI-assist features in the admin DB Explorer (§21).
 
-```text
-routine tasks could be routed to local models
-high-risk disagreement could escalate to a premium model (myTbot pattern)
-```
+Future extension (not built): routine, low-risk turns could be auto-routed to a cheap/local model and only escalated to a premium model when needed. The provider abstraction makes this a routing layer, not a rewrite.
 
 ## Tooling and quality
 
@@ -384,7 +381,9 @@ acme-fde-assistant/
             base.py
             anthropic_provider.py
             openai_provider.py
-            ollama_provider.py    # stub with explicit NotImplementedError + docstring
+            google_provider.py    # real Gemini provider
+            ollama_provider.py    # real local-model provider over the Ollama HTTP API
+          model_registry.py       # the registered models the picker offers
           cost_table.py           # per-model USD pricing
 
       skills/
@@ -396,7 +395,8 @@ acme-fde-assistant/
         rbac.py
         action_catalogue.py
         action_guard.py
-        pii_redactor.py           # regex-based stub; documents Presidio extension
+        pii_redactor.py           # regex redactor (emails/phones/cards/ids); Presidio is the documented production extension
+        local_screener.py         # optional local-LLM second opinion for adversarial + PII (complements the rules)
 
       observability/
         otel.py
@@ -615,6 +615,16 @@ Use roles for RBAC enforcement. Do not rely on the LLM for access control.
 
 # 8. PostgreSQL schema
 
+## 8.0 Append-only invariant
+
+The database is append-only from the application's perspective: the app emits only `INSERT` and `UPDATE`, never `DELETE`. End-of-life is expressed by a lifecycle column — entity-specific where one exists (`customers.status`, `issues.status`, `next_actions.status`, `conversations.deleted_at`, `users.deleted_at`) and a generic `is_active` boolean where it doesn't (`user_roles`, `action_catalogue`). The audit tables (`agent_traces`, `trace_events`, `tool_call_logs`, `rbac_decisions`) are strictly immutable — never updated or deleted — so the Decision Ledger can never be rewritten. The only way rows actually leave the database is a dev-time `docker compose down -v`, outside the app's reach.
+
+Two consequences this enables:
+
+- **Live FKs alongside snapshot text.** Because users are never deleted, every actor column can carry a real `user_id` foreign key *in addition to* the historical display string — `conversations.user_id`, `agent_traces.user_id`, `next_actions.created_by_user_id`, `eval_results.user_id` all point at `users(id)`, while the TEXT `username`/`role` columns preserve what the actor was called at the time. The ER graph is fully connected with no orphan tables.
+- **Active-row views.** `v_active_users`, `v_active_user_roles`, `v_active_customers`, `v_active_conversations` bake in the "WHERE active" filter so listing endpoints can't forget it; audit endpoints read the base tables.
+- **GDPR erasure** is a stored function `redact_user_pii(user_id)` that overwrites PII columns in place (row counts unchanged) rather than deleting — the right-to-erasure path that still honours the append-only ledger.
+
 ## 8.1 customers
 
 ```sql
@@ -735,22 +745,31 @@ Idempotency: `idempotency_key = sha256(trace_id || action_type || issue_ref)`. R
 
 ```sql
 CREATE TABLE users (
-    id UUID PRIMARY KEY,
-    keycloak_subject TEXT NOT NULL UNIQUE,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username TEXT NOT NULL UNIQUE,
-    display_name TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    email TEXT,
+    display_name TEXT,
+    keycloak_subject TEXT UNIQUE,   -- stamped on first login
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at TIMESTAMPTZ
 );
 
 CREATE TABLE user_roles (
-    id UUID PRIMARY KEY,
-    user_id UUID NOT NULL REFERENCES users(id),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role_name TEXT NOT NULL,
-    source TEXT NOT NULL DEFAULT 'keycloak',
-    valid_from TIMESTAMPTZ NOT NULL DEFAULT now(),
-    valid_to TIMESTAMPTZ
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    granted_by TEXT,
+    revoked_at TIMESTAMPTZ,
+    revoked_by TEXT,
+    CONSTRAINT unique_user_role UNIQUE (user_id, role_name),
+    CONSTRAINT role_name_supported CHECK (role_name IN ('sales_user','support_user','admin'))
 );
 ```
+
+**Postgres is the source of truth for authorization.** Keycloak still authenticates (verifies the password, issues the JWT), but the role list on the resulting session comes from `user_roles`, not from the token's `realm_access.roles`. At login the app verifies the password via Keycloak, then looks up the user's active roles in Postgres; if the user has no row in `users` (or no supported role), login is rejected even when Keycloak accepted the password. This removes the single-source-of-truth ambiguity (one place answers "which roles does this user have?") and lets the app own its own role vocabulary. On first successful login the Keycloak `sub` is stamped onto `users.keycloak_subject`, linking the two stores. A user can hold multiple roles; the highest (admin > support_user > sales_user) is the primary role for UI decisions, while RBAC checks the full set.
 
 ## 8.7 conversations
 
@@ -832,7 +851,7 @@ CREATE TABLE tool_call_logs (
 );
 ```
 
-`output_summary` stores a shape-preserving summary, not the raw record set (Barescope-style: proof without storing sensitive payloads).
+`output_summary` stores a shape-preserving summary, not the raw record set — proof without storing sensitive payloads.
 
 ## 8.11 rbac_decisions
 
@@ -1481,7 +1500,7 @@ Clarification Required
 Adversarial Input Blocked
 ```
 
-This borrows the clarity of Barescope's verification badge model.
+The badge taxonomy gives every answer an at-a-glance verification status.
 
 ---
 
@@ -1499,7 +1518,7 @@ centre:          chat thread, streaming
 right top:       evidence panel
 right middle:    proposed action card (Confirm / Cancel buttons)
 right bottom:    trace summary (trace_ref, total_tokens, cost, latency)
-top right:       provider switcher (anthropic / openai / ollama-stub)
+on composer:     model picker (Claude / GPT / Gemini / local Ollama models)
 ```
 
 ## 15.3 Chat response structure
@@ -1541,9 +1560,9 @@ View Decision Trace: TRC-00042  |  $0.0123  |  4218 tokens  |  3.4s
 
 Click opens `/traces/TRC-00042`.
 
-## 15.6 Provider switcher
+## 15.6 Model picker
 
-A small dropdown in the top right. Changing it sends `X-LLM-Provider: ollama` on the next request. Used during demo 6 to show the abstraction is real.
+A dropdown on the composer lists every registered model (Claude, GPT, Gemini, local Ollama models) grouped by provider. The chosen `model_key` rides on the next request (`X-LLM-Model` header / `model_key` field). Used during demo 6 to show the provider abstraction is real — the same query is re-run on a different model and the trace records which model handled the plan and the narration.
 
 ---
 
@@ -1551,7 +1570,12 @@ A small dropdown in the top right. Changing it sends `X-LLM-Provider: ollama` on
 
 ## 16.1 Positioning
 
-> OpenTelemetry tells us what ran. The Decision Trace Viewer tells us why the agent acted, what evidence it used, whether it was allowed to act, and what outcome resulted.
+> OpenTelemetry tells us *what* ran (spans, latencies, metrics). The Decision Trace Viewer tells us *why* the agent acted, what evidence it used, whether it was allowed to act, and what outcome resulted.
+
+The two are complementary and the prototype ships **both**, with a clear separation of concerns:
+
+- **Decision Ledger (Postgres)** is the durable, append-only source of truth the product depends on (`agent_traces`, `trace_events`, `tool_call_logs`, `rbac_decisions`). The trace viewer and DB Explorer read it. It must never depend on the observability backend being up.
+- **OpenTelemetry** is the operational overlay. The app exports spans and metrics over OTLP to a Collector, which fans out to **Jaeger** (traces UI) and **Prometheus** (metrics). The collector config lives in `infra/otel/collector-config.yaml`; Jaeger and Prometheus run as Compose services. Every trace row stores its `otel_trace_id`, and an in-app popover (on the trace viewer and the DB Explorer) reconstructs the span timeline from our own data and deep-links to Jaeger when the trace is present there.
 
 ## 16.2 Evidence-to-Action Decision Graph
 
@@ -1662,7 +1686,90 @@ phone      → [REDACTED-PHONE]
 16-digit   → [REDACTED-CARD]
 ```
 
-The original is kept in `agent_traces.user_query` for audit; the trace viewer only renders `user_query_redacted` by default. Document Presidio as the production extension in `DECISION_LOG.md`.
+The original is kept in `agent_traces.user_query` for audit; the trace viewer only renders `user_query_redacted` by default. Presidio is the documented production extension.
+
+**Local-LLM complement (optional, fail-soft).** When a local Ollama model is available, the adversarial and PII stages each run the deterministic rules **and** a local-LLM second opinion in parallel:
+
+```text
+adversarial.check → flag if rules OR local model flag it (union of reasons)
+pii.redact        → regex redactions, then layered with extra substrings the
+                    local model surfaces (e.g. personal names the regex can't catch)
+```
+
+The rules are the floor: if the local model is offline or returns garbage, behaviour is exactly rules-only. The trace records which screeners contributed (`contributors: ["rules", "local_llm"]`). See `policy/local_screener.py`.
+
+---
+
+# 16A. Data-driven configuration (action catalogue + recommendation rules)
+
+Two pieces of agent behaviour are configuration in the database, not hard-coded constants, so an operator can change them without a deploy.
+
+## 16A.1 Action catalogue is live
+
+`action_catalogue` is the single source of truth for which action types exist, who may propose them (`allowed_roles`), their required fields, side-effect level and whether they need confirmation. Both processes that need this — the app and the MCP server — load it from Postgres and refresh on change:
+
+```text
+app   → loads at startup; hot-reloads within ~2 ms of a row change via the
+        realtime LISTEN/NOTIFY channel (see 16D). The LLM planner prompt is
+        built dynamically from the live set, so a newly-added action type is
+        known to the next agent turn.
+MCP   → loads with a short TTL cache; picks up changes within ~5 s.
+```
+
+Adding a row makes an action type **valid and proposable** end-to-end (validation, RBAC, write all accept it). Retiring one is `is_active = false`. The role→action permission map is derived from `allowed_roles`, not a separate hand-maintained table.
+
+## 16A.2 Recommendation rules are live
+
+Which action to recommend in a given situation used to be hard-coded `if/elif` logic inside the skills and the `recommend_next_action` tool. It now lives in an `action_recommendation_rules` table:
+
+```text
+rule_ref, recommender, priority_order, conditions (JSONB),
+action_type (FK → action_catalogue), recommended_priority,
+rationale_template, is_active, notes
+```
+
+A small rules engine (app-side, mirrored MCP-side with a TTL cache) evaluates the active rules for a recommender in `priority_order`, matches `conditions` against the situation facts (severity, SLA, tier, owner present, …) and returns the first hit's `action_type` + priority. The hard-coded decision trees were migrated into seed rows, so behaviour is identical out of the box — but an operator can now add a rule (e.g. "P1 + Enterprise + breached → PREPARE_RECOVERY_PLAN/Critical") and the agent will recommend it, with no code change.
+
+> Safety property preserved: the agent still never invents an action; every recommendation resolves to a catalogue entry, and every write still goes through propose-confirm + RBAC.
+
+---
+
+# 16B. Identity and authorization
+
+Covered in the schema (§8.6): Keycloak authenticates, Postgres `users`/`user_roles` is the authoritative role store, roles are read at login and carried in the signed session. The role vocabulary (`sales_user`, `support_user`, `admin`) is deliberately **not** data-driven — it is a security primitive pinned in code and a DB `CHECK` constraint, because adding a role means deciding its RBAC, which is policy, not config.
+
+---
+
+# 16C. Admin DB Explorer
+
+An admin-only screen at `/db-explorer` for inspecting and amending the database directly — the operator-facing complement to the read-only trace viewer.
+
+## 16C.1 Pivot drill-down
+
+Pick a root table; it lists rows with every real column (introspected live from `information_schema`, so the view can never drift from the schema). Any cell that participates in a relationship shows a `+`; clicking it expands an inline nested table of the related rows (forward FKs and reverse FKs), which themselves have `+` markers — so you can drill `customers → issues → next_actions → users → conversations`. Backwards loops into a table already on the drill path are suppressed; each table sizes to its own content and scrolls independently.
+
+## 16C.2 Realtime
+
+Postgres `AFTER INSERT/UPDATE/DELETE` triggers emit `pg_notify('db_explorer', {table, op, id})`. A dedicated app `LISTEN` connection fans these to admin WebSocket clients; the page applies each event live — new rows flash in, updates replace in place, deletes fade out — without a refresh. A green "LIVE" indicator shows the socket state. The same channel drives the action-catalogue hot-reload (§16A.1).
+
+## 16C.3 Edit and append (admin)
+
+A curated set of tables is editable from the UI (`action_catalogue`, `action_recommendation_rules`, `customers`, `issues`, `issue_updates`, `users`, `user_roles`) — tinted in the sidebar. The audit ledger and eval tables stay strictly read-only. Editing is schema-driven from a per-column edit spec:
+
+```text
+- "✎ New record" inserts an inline editor row; the button morphs into
+  Confirm / Cancel. Confirm stays grey until all required fields are valid,
+  and the row turns green when complete.
+- System fields (ids, timestamps, business refs) are auto-generated and shown
+  read-only. Enums/booleans are dropdowns; FK fields are dropdowns of valid
+  targets; arrays are multi-selects — minimum typing.
+- A row-level ✨ button asks the local LLM for ONE complete, internally
+  consistent sample record (name ↔ email coherent), respecting every dropdown
+  and FK; the user can then tweak or cancel. Nothing is written until Confirm.
+- Click any cell to edit in place by type.
+```
+
+All writes go through admin-gated, validated endpoints that only `INSERT`/`UPDATE` (never `DELETE`), so the append-only invariant (§8.0) holds even from the UI. Changes propagate back to the grid via the same realtime channel.
 
 ---
 
@@ -1801,7 +1908,7 @@ Expected: only one row in next_actions, second confirm returns existing action_r
 
 ### Case 13 - LLM provider failure (NEW)
 Role: `support_user`
-Setup: `LLM_PROVIDER=ollama` (stub), or primary key revoked.
+Setup: select a model whose provider is unreachable (e.g. revoke the API key, or stop the local Ollama server).
 Query: any normal query.
 Expected: graceful failure, no PostgreSQL writes, user gets a clear "LLM unavailable" response, trace records the error event.
 
@@ -1972,7 +2079,7 @@ Use Mermaid for diagrams.
 
 ```text
 1. Overview
-2. Design Lineage         (NEW — names Nabu One, myTbot, Up & Loud, Barescope)
+2. Design principles in practice   (the load-bearing patterns; mirrors §3)
 3. What the prototype demonstrates
 4. Architecture diagram   (Mermaid, mirrors ARCHITECTURE.md section 1)
 5. How to run
@@ -1983,18 +2090,19 @@ Use Mermaid for diagrams.
 10. Skills design
 11. RBAC and propose-confirm flow
 12. Adversarial input handling
-13. Observability design
+13. Observability design (Decision Ledger + OpenTelemetry → Jaeger/Prometheus)
 14. Cost and token observability
 15. Evaluation suite and methodology
-16. Failure modes
-17. AI coding tool usage
-18. Decision log               (NEW — replaces ad-hoc trade-off notes)
-19. Production hardening
+16. Admin DB Explorer (drill-down, realtime, edit/append)
+17. Failure modes
+18. AI coding tool usage
+19. Decision log
+20. Production hardening
 ```
 
-## Design Lineage paragraph (top of README, after overview)
+## Design-principles paragraph (top of README, after overview)
 
-> This prototype draws on patterns developed across prior work: the Decision Ledger and modular-monolith approach from Nabu One; the "AI advises, rules execute" safety model and adapter-isolation pattern from myTbot; evidence-as-first-class-data from Up & Loud; and the verification-badge taxonomy from Barescope. The Evidence-to-Action Decision Graph is the synthesis of all four — every AI-assisted decision in this system records who acted, why, on what evidence, under what permissions, and with what outcome.
+> The prototype is organised around one idea — **the LLM advises, deterministic policy executes** — and a small set of patterns that make that safe and auditable: an append-only **Decision Ledger** (who acted, why, on what evidence, under what permissions, with what outcome), **evidence as first-class data**, a closed **action catalogue** the LLM cannot expand, server-side **RBAC** taken from the token (never the LLM's plan), and a **propose-confirm** flow so no write happens without an explicit human click. The synthesis is the **Evidence-to-Action Decision Graph**, rendered in a custom trace viewer and backed by OpenTelemetry.
 
 ## Architecture diagram
 
@@ -2002,24 +2110,30 @@ Use Mermaid for diagrams.
 flowchart TD
     U[User] --> UI[Acme Assistant UI]
     UI --> API[FastAPI App]
-    API --> KC[Keycloak]
-    API --> ADV[Adversarial Check]
-    ADV --> PII[PII Redactor]
+    API --> KC[Keycloak  - authentication]
+    API --> ADV[Adversarial Check  - rules + optional local LLM]
+    ADV --> PII[PII Redactor  - rules + optional local LLM]
     PII --> AG[Agent Orchestrator]
-    AG --> LLM[LLM Provider Abstraction]
+    AG --> LLM[LLM Provider Abstraction / Model Registry]
     LLM --> ANT[Anthropic]
     LLM --> OAI[OpenAI]
-    LLM --> OLL[Ollama stub]
+    LLM --> GEM[Google Gemini]
+    LLM --> OLL[Ollama  - local]
     AG --> REDIS[Redis Memory]
     AG --> MCP[MCP Client]
     MCP --> MCPS[Custom Acme MCP Server]
     MCPS --> PG[(PostgreSQL)]
     AG --> SK[Skills Registry]
-    AG --> POL[Policy + Action Guard]
+    AG --> POL[Policy + Action Guard  - RBAC, action catalogue, rec. rules]
     POL --> PG
     API --> TRACE[Decision Trace Viewer]
+    API --> DBX[Admin DB Explorer  - drill-down + realtime + edit]
     API --> OTEL[OpenTelemetry Collector]
+    OTEL --> JAEGER[Jaeger  - traces]
+    OTEL --> PROM[Prometheus  - metrics]
     TRACE --> PG
+    DBX --> PG
+    PG -. LISTEN/NOTIFY .-> API
 ```
 
 ---
@@ -2162,7 +2276,7 @@ Acceptance: sales_user can read, sales_user cannot propose create_action, suppor
 ## Day 3 - Agent, Skills, Redis, propose-confirm
 
 ```text
-LLM provider abstraction (Anthropic + OpenAI live, Ollama stub)
+LLM provider abstraction (Anthropic + OpenAI + Google Gemini + local Ollama, all live)
 cost table per provider
 agent planner with hardening preamble
 dynamic tool selection
@@ -2203,11 +2317,11 @@ FAILURE_MODES.md complete
 DECISION_LOG.md complete
 AI_USAGE.md complete with prompts/ folder
 EVAL_RESULTS.md with 3-run variance
-README polished with Design Lineage paragraph
+README polished with design-principles paragraph
 demo script
 backup screenshots
 backup recorded demo (in case of LLM API outage on demo day)
-stub LLM provider that returns canned responses for offline demo
+local Ollama model as the zero-cost offline fallback for demo day
 clean GitHub repo, squashed commits, CHANGELOG.md
 ```
 
@@ -2266,11 +2380,11 @@ Give me an escalation summary for all high-risk customers and tell me what needs
 
 Show: Skill invoked, multiple tool calls across Northwind, Acme Manufacturing, Skyline Aviation; risk assessment; management actions recommended.
 
-## Demo 6 - Provider switch
+## Demo 6 - Model switch
 
-Same admin session. Open provider dropdown. Switch from Anthropic to OpenAI. Rerun the same query. Show: same structure of answer, same tool calls, slightly different wording, cost difference visible in trace.
+Same admin session. Open the model picker on the composer. Switch from Claude to GPT (or to a local Ollama model). Rerun the same query. Show: same structure of answer, same tool calls, slightly different wording, the model name and cost difference visible in the trace.
 
-> "The provider abstraction is real. In a real deployment, you can route routine queries to a local model and escalate adjudication to a premium one — this is the multi-model pattern from one of my earlier projects, deferred to v2 here to keep demo risk down."
+> "The provider abstraction is real — four providers behind one interface, including local models at zero per-token cost. In a real deployment you could auto-route routine queries to a cheap or local model and reserve a premium model for high-risk turns; the abstraction makes that a routing layer, not a rewrite."
 
 ## Demo 7 - Adversarial input
 
@@ -2307,7 +2421,7 @@ Show: 13 cases × 3 runs, pass rate per case, total cost, variance flagged where
 
 ## Demo 11 - Failure mode
 
-Stop the LLM API key (or switch to ollama-stub which raises). Ask any query.
+Pick a model whose provider is unreachable (revoke the API key, or stop the local Ollama server). Ask any query.
 
 Show: graceful failure, no write, trace records the error, user gets a clear message. Open `FAILURE_MODES.md` and walk through the table.
 
@@ -2454,7 +2568,7 @@ Document these as future improvements, not MVP scope:
 Authorization Code with PKCE instead of demo direct grant flow
 Refresh-token rotation, short access TTL
 Multi-tenant scoping (tenant_id on every business table, row-level security)
-Ollama / local model routing for private deployments (multi-model adjudication from myTbot)
+Cost/risk-based model routing (auto-route routine turns to cheap/local models, escalate high-risk turns to a premium model)
 Phoenix or LangSmith integration for extended LLM observability
 Proper secrets management through Vault or cloud secret store
 Kubernetes deployment
@@ -2468,10 +2582,10 @@ Cost budget enforcement (cut off a session that exceeds USD threshold)
 Tool circuit breakers (auto-disable a tool that is failing repeatedly)
 ```
 
-Multi-model heritage from myTbot:
+Cost/risk-based model routing (future):
 
 ```text
-Routine AI tasks routed to local or lower-cost models; high-risk disagreement escalates to a premium adjudicator. The provider abstraction in this MVP is the foundation for that pattern but the adjudication loop is not active to avoid demo risk.
+Routine AI turns routed to local or lower-cost models; high-risk turns escalated to a premium model. The provider abstraction and per-model cost table in this prototype are the foundation for that routing layer; the routing itself is intentionally out of scope here.
 ```
 
 ---
@@ -2513,7 +2627,7 @@ Deliverables:
 - A custom trace viewer showing the Evidence-to-Action Decision Graph including token usage and estimated USD cost.
 - OpenTelemetry spans for auth, adversarial check, PII redaction, planning, LLM, MCP tools, Skills, Redis, DB, propose, confirm.
 - An evaluation suite with 13 cases covering tool selection, grounding, RBAC, action reasonableness, adversarial input, idempotency, and LLM failure mode. Run the suite 3 times and report variance.
-- README.md (with Design Lineage paragraph), ARCHITECTURE.md, AI_USAGE.md (with prompts/ folder), EVAL_RESULTS.md, FAILURE_MODES.md, DECISION_LOG.md, CHANGELOG.md.
+- README.md (with the design-principles paragraph), ARCHITECTURE.md, AI_USAGE.md (with prompts/ folder), EVAL_RESULTS.md, FAILURE_MODES.md, DECISION_LOG.md, CHANGELOG.md.
 - pytest tests for auth, RBAC, MCP tools, Skills, Redis memory, traces, eval runner, adversarial input, idempotency, propose-confirm, PII redactor, failure modes.
 
 Build order:
@@ -2523,7 +2637,7 @@ Build order:
 4. FastAPI app, auth, adversarial check, PII redactor, health routes.
 5. MCP server, business tools, input sanitisation.
 6. RBAC, action catalogue, action_guard.
-7. LLM provider abstraction (Anthropic + OpenAI + Ollama stub) and cost table.
+7. LLM provider abstraction + model registry (Anthropic + OpenAI + Google Gemini + local Ollama, all real) and per-model cost table.
 8. Agent planner with hardening preamble and dynamic tool selection.
 9. Skills registry, Customer Escalation Summary Skill, Closure Readiness Check Skill.
 10. Redis conversation memory, pending action with confirmation_token.
@@ -2532,7 +2646,7 @@ Build order:
 13. Custom trace viewer with cost / token display.
 14. OpenTelemetry spans.
 15. Evaluation runner with 13 cases and variance reporting.
-16. UI polish, conversation sidebar, provider switcher.
+16. UI polish, conversation sidebar, model picker, admin DB Explorer.
 17. README, ARCHITECTURE, AI_USAGE, EVAL_RESULTS, FAILURE_MODES, DECISION_LOG, CHANGELOG.
 18. Demo script and backup recorded demo.
 
@@ -2559,18 +2673,22 @@ The prototype is done when you can show, live:
 11. Agent dynamically selects tools.
 12. Customer Escalation Summary Skill and Closure Readiness Check Skill are both invoked.
 13. Adversarial input is blocked and recorded.
-14. Provider switch (Anthropic → OpenAI → Ollama stub) works on the live system.
+14. Model switch (Claude → GPT → Gemini → local Ollama) works on the live system, with the chosen model recorded in the trace.
 15. OpenTelemetry spans are emitted with cost attributes.
 16. Custom trace viewer shows the Evidence-to-Action Decision Graph including cost and tokens.
 17. PII redaction is applied at display.
 18. Evaluation suite (13 cases × 3 runs) produces documented results with variance.
-19. README explains architecture, design lineage, trade-offs and AI usage.
+19. README explains architecture, design principles, trade-offs and AI usage.
 20. FAILURE_MODES.md, DECISION_LOG.md, ARCHITECTURE.md and prompts/ folder are all present and substantive.
 21. Backup recorded demo exists for the panel in case of LLM outage.
+22. Postgres is the authorization source of truth; a user added with no role cannot log in.
+23. The data model is append-only; the admin DB Explorer drills through relationships, updates live over WebSocket, and supports validated edit/append with AI-assisted record generation.
+24. The action catalogue and recommendation rules are data-driven; adding a row changes agent behaviour with no code change.
+25. OpenTelemetry traces reach Jaeger and metrics reach Prometheus; trace IDs link from the in-app viewer to Jaeger.
 ```
 
 The core narrative for the panel:
 
-> "I built a secure, auditable enterprise assistant where the LLM plans and explains, MCP exposes governed tools, Skills create repeatable workflows, policy controls execution under a propose-confirm flow, PostgreSQL stores business truth, Redis stores short-term working memory, every decision is observable down to the token and dollar, and the system treats user input as data — not instruction. The Evidence-to-Action Decision Graph is the synthesis of patterns I've developed across Nabu One, myTbot, Up & Loud and Barescope."
+> "I built a secure, auditable enterprise assistant where the LLM plans and explains, MCP exposes governed tools, Skills create repeatable workflows, policy controls execution under a propose-confirm flow, PostgreSQL stores business truth, Redis stores short-term working memory, every decision is observable down to the token and dollar, and the system treats user input as data — not instruction. The Evidence-to-Action Decision Graph is the synthesis: every AI-assisted decision records who acted, why, on what evidence, under what permissions, and with what outcome."
 
 That is the sentence to end on.

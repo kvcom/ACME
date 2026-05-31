@@ -2,16 +2,18 @@
 
 A local, Dockerised, end-to-end prototype of an agentic enterprise assistant for a fictional company called Acme Operations. Built as a five-day FDE technical assessment for a Director-level AI engineering role.
 
-## Design lineage
+## Design principles
 
-This prototype synthesises patterns developed across prior work:
+The prototype is organised around one idea — **the LLM advises, deterministic policy executes** — and a small set of patterns that make that safe and auditable:
 
-- **Decision Ledger and modular-monolith approach** — from Nabu One. Every agent action records who, why, on what evidence, under what permissions, with what outcome.
-- **"AI advises, rules execute" safety model and adapter isolation** — from myTbot. The LLM proposes; deterministic policy executes. RBAC and the action catalogue are non-LLM gates.
-- **Evidence as first-class data** — from Up & Loud. Every claim links to evidence; "Insufficient Evidence" is a visible decision badge.
-- **Verification badge taxonomy** — from Barescope. Grounded / Partially Grounded / Needs Review / Permission Denied / Action Proposed / Action Created / Insufficient Evidence / Clarification Required / Adversarial Input Blocked.
+- **Decision Ledger.** Every agent action records who, why, on what evidence, under what permissions, with what outcome. Append-only — the audit record can never be rewritten.
+- **Evidence as first-class data.** Every claim links to the records and tools that support it; "Insufficient Evidence" is a visible decision badge.
+- **Closed action catalogue + server-side RBAC.** The LLM cannot invent action types, and RBAC is taken from the token, never from the LLM's plan.
+- **Propose-confirm for writes.** No side-effecting write happens without an explicit human confirmation.
+- **Verification badges.** Grounded / Partially Grounded / Needs Review / Permission Denied / Action Proposed / Action Created / Insufficient Evidence / Clarification Required / Adversarial Input Blocked.
+- **Modular monolith with adapter isolation.** One FastAPI app with explicit `domain`/`application`/`infrastructure`/`api` boundaries; the LLM provider, MCP client and Keycloak validator each sit behind a clean interface.
 
-The **Evidence-to-Action Decision Graph** in the trace viewer is the synthesis of all four.
+The **Evidence-to-Action Decision Graph** in the trace viewer is the synthesis: every AI-assisted decision records who acted, why, on what evidence, under what permissions, and with what outcome.
 
 ## What this prototype demonstrates
 
@@ -134,7 +136,7 @@ The adversarial check fires, the planner routes to a refusal, no tools are calle
 - **PostgreSQL is the business truth**: customers, issues, next_actions, conversations, agent_traces, trace_events, tool_call_logs, rbac_decisions, eval_runs, eval_results. If PostgreSQL is unavailable the app returns 503.
 - **Redis is working memory**: recent turns, last referenced customer/issue, pending proposed action with TTL, customer-lookup cache, tool-result cache. If Redis is unavailable the app still answers fresh queries but loses follow-up references like *"that action"*.
 
-Acme services inside Docker use `redis:6379` via `REDIS_URL=redis://redis:6379/0`. Local Windows tools should connect to Acme Redis at `127.0.0.1:6380` with no username, no password, and TLS off. Avoid `127.0.0.1:6379` for this project because that host port may belong to another local Redis instance, such as myTbot.
+Acme services inside Docker use `redis:6379` via `REDIS_URL=redis://redis:6379/0`. Local tools should connect to Acme Redis at `127.0.0.1:6380` with no username, no password, and TLS off. Avoid `127.0.0.1:6379` for this project in case that host port is already taken by another local Redis instance.
 
 ## MCP design
 

@@ -14,7 +14,7 @@ Each entry: D-NNN, the choice, why, and the production replacement.
 
 **Choice**: One FastAPI app with `domain` / `policy` / `application` / `infrastructure` / `api` module boundaries. The MCP server is a separate container only because it exposes a separate protocol surface.
 
-**Why**: Borrowed from the Nabu One Phase 0 pattern. A five-day MVP cannot afford to fight microservice orchestration; the internal split is enough to keep the boundary clear and to make later extraction tractable.
+**Why**: A five-day MVP cannot afford to fight microservice orchestration; the internal split is enough to keep the boundary clear and to make later extraction tractable.
 
 **Production**: Extract `mcp_server`, `agent`, and `policy` into separate services only when scale or team boundaries demand it.
 
@@ -48,7 +48,7 @@ Each entry: D-NNN, the choice, why, and the production replacement.
 
 **Choice**: Risk level and recommended action type are computed by `domain/risk_rules.py` from fixed rules. The LLM only generates the narration.
 
-**Why**: Eval correctness requires deterministic classification across runs; only wording is allowed to vary. Borrowed from the myTbot "AI advises, rules execute" pattern.
+**Why**: Eval correctness requires deterministic classification across runs; only wording is allowed to vary. This is the prototype's core "AI advises, rules execute" principle applied to risk scoring.
 
 **Production**: Same model. Risk rules graduate to a configuration store with versioning and auditability.
 
@@ -120,7 +120,7 @@ Each entry: D-NNN, the choice, why, and the production replacement.
 
 **Choice**: `POST /actions/confirm` is a real endpoint with HMAC verification. The agent never auto-executes a write even for admin.
 
-**Why**: Makes "AI recommends, policy executes" visible in network traffic and trace events, not just in code comments. Borrowed from myTbot.
+**Why**: Makes "AI recommends, policy executes" visible in network traffic and trace events, not just in code comments — the prototype's core safety boundary, enforced at the API surface.
 
 **Production**: Same model. Add a separate approval state machine for high-side-effect actions that require multi-step approval.
 

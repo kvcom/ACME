@@ -1,6 +1,6 @@
 /* ─── Acme Operations Assistant — shared styles ───────────────────────
-   Plug-and-play CSS for the FastAPI/Jinja2 UI. Tokens follow the mytbot
-   design system: dark, mono numerics, terse operator-grade. ─────────── */
+   Plug-and-play CSS for the FastAPI/Jinja2 UI. Dark theme, mono numerics,
+   single terracotta accent — terse, operator-grade. ─────────────────── */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 

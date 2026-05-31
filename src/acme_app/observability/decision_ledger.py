@@ -73,7 +73,7 @@ class Ledger:
 
 
 def summarise_output(output: dict[str, Any]) -> dict[str, Any]:
-    """Barescope-style summary: shape but not payload."""
+    """Store the shape of a tool output, not its raw payload (proof without storing sensitive data)."""
     summary: dict[str, Any] = {}
     for key, value in output.items():
         if isinstance(value, list):
