@@ -19,6 +19,7 @@ _BADGE_CLASS = {
     'Action Created': 'created',
     'Action Cancelled': 'cancelled',
     'Insufficient Evidence': 'insufficient',
+    'Conversational': 'neutral',
     'Clarification Required': 'clarify',
     'Adversarial Input Blocked': 'adversarial',
     'LLM Unavailable': 'needsreview',

@@ -172,7 +172,7 @@ async def chat_stream(
             )
             await queue.put(('done', result.model_dump(mode='json')))
         except Exception as exc:
-            await queue.put(('error', {'error': str(exc)}))
+            await queue.put(('agent_error', {'error': str(exc)}))
         finally:
             await queue.put(None)
 

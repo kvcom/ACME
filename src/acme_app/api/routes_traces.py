@@ -1,6 +1,7 @@
 """Trace viewer routes."""
 from __future__ import annotations
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,21 @@ router = APIRouter(prefix='/traces', tags=['traces'])
 
 def _can_read_trace(user: CurrentUser, trace: dict) -> bool:
     return 'admin' in user.roles or trace.get('username') == user.username
+
+
+async def _jaeger_trace_available(otel_trace_id: str | None) -> bool:
+    if not otel_trace_id:
+        return False
+    base_url = settings.otel_jaeger_query_url.rstrip('/')
+    try:
+        async with httpx.AsyncClient(timeout=1.5) as client:
+            resp = await client.get(f'{base_url}/api/traces/{otel_trace_id}')
+        if resp.status_code != 200:
+            return False
+        data = resp.json()
+        return bool(data.get('data'))
+    except Exception:
+        return False
 
 
 @router.get('', response_class=HTMLResponse)
@@ -73,12 +89,14 @@ async def trace_otel(
     trace = await repo.get_trace(session, trace_ref)
     if trace is None or not _can_read_trace(user, trace):
         raise HTTPException(status_code=404, detail='Trace not found')
+    jaeger_available = await _jaeger_trace_available(trace.get('otel_trace_id'))
     return {
         'otel_trace_id': trace.get('otel_trace_id') or '',
         'jaeger_url': (
             f"{settings.otel_jaeger_ui_url.rstrip('/')}/trace/{trace.get('otel_trace_id')}"
-            if trace.get('otel_trace_id') else ''
+            if jaeger_available else ''
         ),
+        'jaeger_available': jaeger_available,
         'trace_ref': trace['trace_ref'],
         'detected_intent': trace.get('detected_intent'),
         'final_status': trace.get('final_status'),

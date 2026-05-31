@@ -37,6 +37,19 @@ def pattern_flags(query: str) -> list[str]:
     return [pattern.pattern for pattern in ADVERSARIAL_PATTERNS if pattern.search(query or '')]
 
 
+def pattern_matches(query: str) -> list[dict[str, str]]:
+    """Human-readable rule matches for trace explanations."""
+    matches: list[dict[str, str]] = []
+    for pattern in ADVERSARIAL_PATTERNS:
+        match = pattern.search(query or '')
+        if match:
+            matches.append({
+                'rule': pattern.pattern,
+                'matched_text': match.group(0),
+            })
+    return matches
+
+
 def check_query(query: str) -> tuple[bool, bool, list[str]]:
     """Return (length_ok, adversarial_detected, flags)."""
     if not length_ok(query):

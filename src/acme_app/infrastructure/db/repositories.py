@@ -31,6 +31,16 @@ async def list_customers(session: AsyncSession, name_like: str | None = None) ->
     return [{'customer_id': r[0], 'name': r[1], 'region': r[2], 'tier': r[3]} for r in rows]
 
 
+async def list_users(session: AsyncSession) -> list[dict[str, Any]]:
+    rows = (await session.execute(text(
+        "SELECT id::text, username, email, display_name FROM users ORDER BY username"
+    ))).all()
+    return [
+        {'user_id': r[0], 'username': r[1], 'email': r[2], 'display_name': r[3]}
+        for r in rows
+    ]
+
+
 def _serialise_record(row: Any) -> dict[str, Any]:
     record = dict(row._mapping)
     for key, value in list(record.items()):
@@ -228,11 +238,27 @@ async def insert_trace_event(
     payload: dict[str, Any],
     status: str = 'ok',
     latency_ms: int | None = None,
+    sequence: int | None = None,
+    created_at_ms: int | None = None,
 ) -> None:
+    stored_payload = dict(payload)
+    if sequence is not None:
+        stored_payload.setdefault('_sequence', sequence)
     await session.execute(text("""
         INSERT INTO trace_events (id, trace_id, event_type, event_name, payload, latency_ms, status, created_at)
-        VALUES (gen_random_uuid(), :t, :et, :en, CAST(:p AS jsonb), :lm, :s, now())
-    """), {'t': trace_id, 'et': event_type, 'en': event_name, 'p': json.dumps(payload), 'lm': latency_ms, 's': status})
+        VALUES (
+            gen_random_uuid(), :t, :et, :en, CAST(:p AS jsonb), :lm, :s,
+            CASE
+                WHEN CAST(:created_at_ms AS bigint) IS NULL THEN now()
+                ELSE to_timestamp(CAST(:created_at_ms AS double precision) / 1000.0)
+                     + ((COALESCE(CAST(:sequence AS integer), 0)) * interval '1 microsecond')
+            END
+        )
+    """), {
+        't': trace_id, 'et': event_type, 'en': event_name,
+        'p': json.dumps(stored_payload), 'lm': latency_ms, 's': status,
+        'sequence': sequence, 'created_at_ms': created_at_ms,
+    })
 
 
 async def get_trace_id_by_ref(session: AsyncSession, trace_ref: str) -> uuid.UUID | None:
@@ -335,8 +361,9 @@ async def get_trace(session: AsyncSession, trace_ref: str) -> dict[str, Any] | N
         return None
     trace_id = row[0]
     events = (await session.execute(text("""
-        SELECT event_type, event_name, payload, latency_ms, status, created_at
-        FROM trace_events WHERE trace_id=:t ORDER BY created_at
+        SELECT event_type, event_name, payload, latency_ms, status, created_at, id::text
+        FROM trace_events WHERE trace_id=:t
+        ORDER BY created_at, COALESCE((payload->>'_sequence')::int, 2147483647), id
     """), {'t': trace_id})).all()
     tool_calls = (await session.execute(text("""
         SELECT tool_name, input_json, output_summary, status, latency_ms, error_message, created_at
@@ -357,6 +384,7 @@ async def get_trace(session: AsyncSession, trace_ref: str) -> dict[str, Any] | N
             'status': e[4],
             'created_at': e[5].isoformat(),
         })
+    normalised_events.sort(key=_trace_event_sort_key)
     evidence = _events_to_evidence(normalised_events)
 
     return {
@@ -379,6 +407,48 @@ async def get_trace(session: AsyncSession, trace_ref: str) -> dict[str, Any] | N
             for r in rbac
         ],
     }
+
+
+def _trace_event_sort_key(event: dict[str, Any]) -> tuple[str, int, int]:
+    payload = event.get('payload') or {}
+    sequence = payload.get('_sequence')
+    if isinstance(sequence, int):
+        return (event.get('created_at') or '', sequence, 0)
+    if isinstance(sequence, str) and sequence.isdigit():
+        return (event.get('created_at') or '', int(sequence), 0)
+    return (event.get('created_at') or '', 2147483647, _trace_event_semantic_rank(event))
+
+
+def _trace_event_semantic_rank(event: dict[str, Any]) -> int:
+    event_type = event.get('event_type') or ''
+    event_name = event.get('event_name') or ''
+    if event_name == 'auth.validate_role':
+        return 10
+    if event_type == 'adversarial':
+        return 20
+    if event_type == 'pii':
+        return 30
+    if event_name == 'outbound_llm.minimized':
+        return 40
+    if event_type == 'memory':
+        return 45
+    if event_type == 'agent_plan':
+        return 50
+    if event_type == 'tool_call':
+        return 60
+    if event_type == 'skill_invocation':
+        return 70
+    if event_type == 'rbac_decision':
+        return 75
+    if event_type.startswith('action'):
+        return 80
+    if event_name == 'outbound_llm.narration_payload':
+        return 90
+    if event_type == 'final_response':
+        return 100
+    if event_type == 'error':
+        return 110
+    return 999
 
 
 async def insert_eval_run(session: AsyncSession, *, eval_run_ref: str, llm_provider: str, llm_model: str) -> uuid.UUID:

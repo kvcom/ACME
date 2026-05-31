@@ -68,6 +68,9 @@
       const d = await resp.json();
       const cost = (d.estimated_cost_usd != null) ? `$${Number(d.estimated_cost_usd).toFixed(4)}` : '·';
       const model = (d.llm_provider || '') + (d.llm_model ? ' / ' + d.llm_model : '');
+      const jaegerLink = d.jaeger_url
+        ? `<a class="otel-link" href="${esc(d.jaeger_url)}" target="_blank" rel="noopener noreferrer">Open in Jaeger ↗</a>`
+        : `<span class="otel-note">not in Jaeger</span>`;
       pop.innerHTML = `
         <h3>OpenTelemetry Trace</h3>
         <div class="otel-id">${esc(d.otel_trace_id || '(none recorded)')}</div>
@@ -85,7 +88,7 @@
         ${spanRows(d.spans)}
         <div class="otel-foot">
           <button class="copy-btn" data-copy="${esc(d.otel_trace_id || '')}">Copy trace id</button>
-          ${d.jaeger_url ? `<a class="otel-link" href="${esc(d.jaeger_url)}" target="_blank">Open in Jaeger ↗</a>` : ''}
+          ${jaegerLink}
           <a class="otel-link" href="/traces/${encodeURIComponent(d.trace_ref)}" target="_blank">Open full decision trace ↗</a>
         </div>`;
       position(btn);

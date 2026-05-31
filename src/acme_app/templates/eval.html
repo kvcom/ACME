@@ -39,8 +39,35 @@
     .ev-tbl tr.variance td { background: rgba(251,191,36,0.04); }
 
     .case-id { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); }
-    .case-q  { font-family: var(--font-mono); font-size: 11px; color: var(--text-high);
-               max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .case-q {
+      font-family: var(--font-mono); font-size: 11px; color: var(--text-high);
+      max-width: 1000px; white-space: normal; overflow-wrap: anywhere;
+      line-height: 1.5;
+    }
+    .case-desc {
+      color: var(--text-secondary); font-size: 11px; margin-bottom: 8px;
+    }
+    .scenario { display: grid; gap: 5px; max-width: 1080px; }
+    .scenario-step {
+      display: grid; grid-template-columns: 72px 1fr; gap: 8px; align-items: start;
+      font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
+    }
+    .scenario-step .step-label {
+      color: var(--text-muted); text-transform: uppercase; font-family: var(--font-ui);
+      font-size: 9px; letter-spacing: 0.08em; padding-top: 1px;
+    }
+    .scenario-step.assertion .step-label { color: var(--accent-dim); }
+    .scenario-step.conversation .step-label { color: var(--text-secondary); }
+    .trace-runs { display: grid; gap: 5px; min-width: 230px; }
+    .trace-run { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .trace-run-label { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); width: 18px; }
+    .trace-link {
+      font-family: var(--font-mono); font-size: 10px; color: var(--accent-dim);
+      text-decoration: none; border: 1px solid var(--border-medium);
+      border-radius: 4px; padding: 2px 5px; background: var(--bg-surface);
+    }
+    .trace-link:hover { border-color: var(--accent-border); color: var(--accent); }
+    .trace-empty { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
     .role-tag { font-family: var(--font-mono); font-size: 10px; }
     .role-tag.sales_user   { color: var(--color-info-dim); }
     .role-tag.support_user { color: var(--accent-dim); }
@@ -100,9 +127,10 @@
       <thead>
         <tr>
           <th style="width:80px;">case</th>
-          <th>query</th>
+          <th>scenario</th>
           <th style="width:90px;">role</th>
           <th style="width:80px;">runs</th>
+          <th style="width:250px;">traces</th>
           <th style="width:140px;">expected</th>
           <th class="num" style="width:80px;">cost</th>
           <th class="num" style="width:80px;">latency</th>
@@ -112,12 +140,40 @@
         {% for c in cases %}
         <tr {% if c.variance %}class="variance"{% endif %}>
           <td><span class="case-id">{{ c.case_id }}</span></td>
-          <td><div class="case-q">"{{ c.query }}"</div></td>
+          <td>
+            {% if c.description %}
+            <div class="case-desc">{{ c.description }}</div>
+            {% endif %}
+            <div class="scenario">
+              {% for step in c.scenario_steps %}
+              <div class="scenario-step {{ step.kind }}">
+                <span class="step-label">{{ step.label }}</span>
+                <span class="case-q">"{{ step.query }}"</span>
+              </div>
+              {% endfor %}
+            </div>
+          </td>
           <td><span class="role-tag {{ c.role }}">{{ c.role.replace('_user', '') }}</span></td>
           <td>
             <div class="runs">
               {% for r in c.runs %}
               <span class="r {% if not r %}fail{% endif %}">{{ '✓' if r else '⚠' }}</span>
+              {% endfor %}
+            </div>
+          </td>
+          <td>
+            <div class="trace-runs">
+              {% for run in c.run_traces %}
+              <div class="trace-run">
+                <span class="trace-run-label">r{{ run.run }}</span>
+                {% if run.traces %}
+                  {% for trace in run.traces %}
+                  <a class="trace-link" href="/traces/{{ trace.trace_ref }}" title="turn {{ trace.turn }} · {{ trace.status or 'trace' }}">t{{ trace.turn }} {{ trace.trace_ref }}</a>
+                  {% endfor %}
+                {% else %}
+                  <span class="trace-empty">no trace</span>
+                {% endif %}
+              </div>
               {% endfor %}
             </div>
           </td>

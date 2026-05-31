@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from acme_app.api._view_helpers import badge_class_for
 from acme_app.auth.current_user import CurrentUser, get_current_user
 from acme_app.config import settings
+from acme_app.evaluation.eval_cases import EVAL_CASES
 from acme_app.infrastructure.db.session import get_db_session
 
 
@@ -28,6 +29,8 @@ _BADGE_FROM_NOTES = {
     'grounded': 'Grounded',
 }
 
+_CASE_BY_ID = {case.id: case for case in EVAL_CASES}
+
 
 def _require_admin(user: CurrentUser) -> CurrentUser:
     if 'admin' not in user.roles:
@@ -41,6 +44,60 @@ def _badge_for_case(case_id: str, expected_status: str | None) -> str:
     if 'adversarial' in case_id or 'case_11' in case_id:
         return 'Adversarial Input Blocked'
     return 'Grounded'
+
+
+def _case_sort_key(case_id: str) -> tuple[str, int, str]:
+    prefix, sep, suffix = case_id.rpartition('_')
+    if sep and suffix.isdigit():
+        return (prefix, int(suffix), '')
+    return (case_id, 0, case_id)
+
+
+def _result_run_number(result_case_id: str) -> int:
+    _, sep, suffix = result_case_id.rpartition('-r')
+    return int(suffix) if sep and suffix.isdigit() else 1
+
+
+async def _eval_turn_traces(
+    session: AsyncSession,
+    *,
+    case_id: str,
+    run_number: int,
+    role: str,
+    turn_count: int,
+) -> list[dict[str, Any]]:
+    """Return the latest traces for one eval case run.
+
+    Eval conversations are deterministic (`EVAL-case_8-r2`). Older eval runs
+    can reuse the same conversation_ref, so we take the latest N turns for the
+    scenario and then restore chronological order.
+    """
+    conversation_ref = f'EVAL-{case_id}-r{run_number}'
+    rows = (await session.execute(text("""
+        SELECT t.trace_ref, t.user_query, t.final_status, t.created_at
+        FROM agent_traces t
+        JOIN conversations c ON c.id = t.conversation_id
+        WHERE c.conversation_ref = :conv
+          AND t.username = :username
+        ORDER BY t.created_at DESC
+        LIMIT :limit
+    """), {
+        'conv': conversation_ref,
+        'username': f'eval-{role}',
+        'limit': max(1, turn_count),
+    })).all()
+    traces = [
+        {
+            'trace_ref': r[0],
+            'query': r[1],
+            'status': r[2],
+            'created_at': r[3].isoformat() if r[3] else None,
+        }
+        for r in reversed(rows)
+    ]
+    for idx, trace in enumerate(traces, start=1):
+        trace['turn'] = idx
+    return traces
 
 
 async def _latest_run_summary(session: AsyncSession) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -74,11 +131,12 @@ async def _latest_run_summary(session: AsyncSession) -> tuple[dict[str, Any], li
             'action': r[6], 'adv': r[7],
             'query': r[1], 'role': r[2],
             'latency': r[8], 'cost': r[9] or 0,
+            'run_number': _result_run_number(r[0]),
         })
 
     cases: list[dict[str, Any]] = []
     variance_count = 0
-    for case_id in sorted(grouped):
+    for case_id in sorted(grouped, key=_case_sort_key):
         runs = grouped[case_id]
         passes = [
             r['tool_sel'] and r['grounding'] and r['rbac'] and r['action']
@@ -86,14 +144,37 @@ async def _latest_run_summary(session: AsyncSession) -> tuple[dict[str, Any], li
             for r in runs
         ]
         first = runs[0]
+        case_def = _CASE_BY_ID.get(case_id)
+        setup = list(case_def.setup) if case_def else []
+        scenario_steps = []
+        for idx, query in enumerate(setup, start=1):
+            label = 'Initial request' if idx == 1 else f'Follow-up {idx - 1}'
+            scenario_steps.append({'kind': 'conversation', 'label': label, 'query': query})
+        scenario_steps.append({'kind': 'assertion', 'label': 'Final test query', 'query': first['query']})
+        run_traces = []
+        for r in sorted(runs, key=lambda item: item['run_number']):
+            run_traces.append({
+                'run': r['run_number'],
+                'traces': await _eval_turn_traces(
+                    session,
+                    case_id=case_id,
+                    run_number=r['run_number'],
+                    role=first['role'],
+                    turn_count=len(scenario_steps),
+                ),
+            })
         case_passed = all(passes)
         if len(set(passes)) > 1:
             variance_count += 1
         cases.append({
             'case_id': case_id,
+            'description': case_def.description if case_def else '',
             'query': first['query'],
+            'setup': setup,
+            'scenario_steps': scenario_steps,
             'role': first['role'],
             'runs': passes,
+            'run_traces': run_traces,
             'badge': _badge_for_case(case_id, None),
             'badge_class': badge_class_for(_badge_for_case(case_id, None)),
             'cost': sum(float(r['cost']) for r in runs),

@@ -47,6 +47,7 @@
     'Action Created': 'created',
     'Action Cancelled': 'cancelled',
     'Insufficient Evidence': 'insufficient',
+    'Conversational': 'neutral',
     'Clarification Required': 'clarify',
     'Adversarial Input Blocked': 'adversarial',
     'LLM Unavailable': 'needsreview',
@@ -387,6 +388,16 @@
     });
     // Final render without the caret, using the complete normalised markdown.
     wrap.innerHTML = renderMarkdown(r.answer || '');
+    followThread();
+  }
+
+  function renderStreamFailure(answerRegion, message) {
+    const wrap = document.createElement('div');
+    wrap.className = 'md-answer';
+    wrap.innerHTML = renderMarkdown(
+      `### Response interrupted\n\n- The request did not finish, so no trace was saved for this turn.\n- ${message || 'Please try the message again.'}`
+    );
+    answerRegion.appendChild(wrap);
     followThread();
   }
 
@@ -1040,6 +1051,18 @@
       followThread();
     });
 
+    es.addEventListener('agent_error', e => {
+      clearInterval(tick);
+      removeComposing(planEl);
+      const d = JSON.parse(e.data || '{}');
+      addStep(planEl, 'stream-error', `response.error <small>· ${escape(d.error || 'request failed')}</small>`, 'fail');
+      renderStreamFailure(answerRegion, escape(d.error || 'Please try the message again.'));
+      sendBtn.disabled = false;
+      sending = false;
+      queryEl.focus();
+      es.close();
+    });
+
     es.addEventListener('done', async e => {
       clearInterval(tick);
       const r = JSON.parse(e.data);
@@ -1074,6 +1097,10 @@
     es.addEventListener('error', () => {
       clearInterval(tick);
       removeComposing(planEl);
+      addStep(planEl, 'stream-error', 'stream.closed <small>· response interrupted</small>', 'fail');
+      if (!answerRegion.textContent.trim()) {
+        renderStreamFailure(answerRegion, 'The stream closed before the final response arrived. This can happen if the development server reloads while a request is running.');
+      }
       sendBtn.disabled = false;
       sending = false;
       es.close();

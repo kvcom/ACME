@@ -1,7 +1,7 @@
 from acme_app.observability.decision_ledger import Ledger, summarise_output
 from acme_app.api.routes_traces import _can_read_trace
 from acme_app.auth.current_user import CurrentUser
-from acme_app.infrastructure.db.repositories import _events_to_evidence
+from acme_app.infrastructure.db.repositories import _events_to_evidence, _trace_event_sort_key
 
 
 def test_ledger_event_collection():
@@ -52,3 +52,41 @@ def test_events_to_evidence_falls_back_to_action_payload():
     ]
 
     assert _events_to_evidence(events) == ['issue:ISS-107']
+
+
+def test_trace_event_sort_key_uses_semantic_order_for_legacy_same_timestamp_events():
+    events = [
+        {'event_type': 'skill_invocation', 'event_name': 'skill.customer_escalation_summary.complete',
+         'payload': {}, 'created_at': '2026-05-31T15:13:28.961197+00:00'},
+        {'event_type': 'auth', 'event_name': 'auth.validate_role',
+         'payload': {}, 'created_at': '2026-05-31T15:13:28.961197+00:00'},
+        {'event_type': 'agent_plan', 'event_name': 'plan.created',
+         'payload': {}, 'created_at': '2026-05-31T15:13:28.961197+00:00'},
+        {'event_type': 'final_response', 'event_name': 'narration.complete',
+         'payload': {}, 'created_at': '2026-05-31T15:13:28.961197+00:00'},
+    ]
+
+    ordered = sorted(events, key=_trace_event_sort_key)
+
+    assert [event['event_name'] for event in ordered] == [
+        'auth.validate_role',
+        'plan.created',
+        'skill.customer_escalation_summary.complete',
+        'narration.complete',
+    ]
+
+
+def test_trace_event_sort_key_prefers_persisted_sequence():
+    events = [
+        {'event_type': 'auth', 'event_name': 'auth.validate_role',
+         'payload': {'_sequence': 2}, 'created_at': '2026-05-31T15:13:28.961197+00:00'},
+        {'event_type': 'skill_invocation', 'event_name': 'skill.customer_escalation_summary.complete',
+         'payload': {'_sequence': 1}, 'created_at': '2026-05-31T15:13:28.961197+00:00'},
+    ]
+
+    ordered = sorted(events, key=_trace_event_sort_key)
+
+    assert [event['event_name'] for event in ordered] == [
+        'skill.customer_escalation_summary.complete',
+        'auth.validate_role',
+    ]

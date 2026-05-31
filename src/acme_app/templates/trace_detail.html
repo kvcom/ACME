@@ -64,6 +64,41 @@
       white-space: pre-wrap; overflow-x: auto; overflow-wrap: anywhere;
       max-height: 46vh;
     }
+    .detail-tabs { display: flex; gap: 4px; padding: 0 12px 10px; }
+    .detail-tab {
+      border: 1px solid var(--border-medium); background: var(--bg-surface);
+      color: var(--text-secondary); border-radius: 4px; padding: 4px 8px;
+      font-size: 10px; font-family: var(--font-ui); cursor: pointer;
+    }
+    .detail-tab.active { border-color: var(--accent-border); color: var(--accent-dim); }
+    .explain {
+      display: grid; gap: 10px; max-height: 52vh; overflow-y: auto;
+      font-size: 11px; color: var(--text-secondary); line-height: 1.55;
+    }
+    .explain-card {
+      border: 1px solid var(--border-subtle); background: var(--bg-base);
+      border-radius: var(--radius-sm); padding: 10px 12px;
+    }
+    .explain-card h4 {
+      margin: 0 0 6px; color: var(--text-muted); font-size: 9px;
+      text-transform: uppercase; letter-spacing: 0.08em; font-weight: 500;
+    }
+    .explain-card p { margin: 0; }
+    .explain-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+    .explain-list li {
+      border-bottom: 1px solid var(--border-subtle); padding-bottom: 6px;
+      overflow-wrap: anywhere;
+    }
+    .explain-list li:last-child { border-bottom: 0; padding-bottom: 0; }
+    .chipline { display: flex; gap: 5px; flex-wrap: wrap; }
+    .mini-chip {
+      font-family: var(--font-mono); font-size: 10px; padding: 1px 5px;
+      border-radius: 4px; border: 1px solid var(--border-medium);
+      color: var(--text-secondary); background: var(--bg-surface);
+    }
+    .mini-chip.good { border-color: rgba(52,211,153,0.28); color: var(--color-active-dim); }
+    .mini-chip.bad { border-color: rgba(251,113,133,0.32); color: var(--color-danger-dim); }
+    .mini-chip.info { border-color: rgba(96,165,250,0.30); color: var(--color-info-dim); }
 
     .tg { position: relative; width: 100%; margin: 0 0 16px; }
     /* Connector line drawn above each node (except the first) — pure CSS, no SVG.
@@ -161,7 +196,7 @@
     <span class="badge badge-{{ trace.badge_class }}">{{ trace.final_status }}</span>
     <div class="spacer" style="flex:1"></div>
     <span class="mono dim" style="font-size:10px;">{{ trace.created_at }} · {{ trace.username }}</span>
-    <a class="btn btn-sm btn-ghost" href="/traces/{{ trace.trace_ref }}/json">⤓ JSON</a>
+    <a class="btn btn-sm btn-ghost" href="/traces/{{ trace.trace_ref }}/json" target="_blank" rel="noopener noreferrer">⤓ JSON</a>
   </div>
 
   <main class="trace-workspace">
@@ -186,7 +221,7 @@
         <div class="kv">
           <span class="k">User</span>     <span class="v">{{ trace.username }} · {{ trace.role }}</span>
           <span class="k">Intent</span>   <span class="v">{{ trace.detected_intent or '—' }}</span>
-          <span class="k">Provider</span> <span class="v">{{ trace.provider }} · {{ trace.model }}</span>
+          <span class="k">LLM</span>      <span class="v">{% if trace.provider and trace.model and trace.provider != trace.model %}{{ trace.provider }} · {{ trace.model }}{% else %}{{ trace.model or trace.provider or '—' }}{% endif %}</span>
           <span class="k">OTel</span>     <span class="v dim">{{ (trace.otel_trace_id or '—')[:12] }}{% if trace.otel_trace_id %}<button class="otel-btn" style="margin-left:6px;" data-otel="{{ trace.otel_trace_id }}" data-otel-url="/traces/{{ trace.trace_ref }}/otel" title="View OpenTelemetry trace timeline">⌕</button>{% endif %}</span>
         </div>
       </div>
@@ -300,14 +335,19 @@
             <span class="k">Cost</span>    <span class="v" id="sel-cost">—</span>
           </div>
         </div>
+        <div class="detail-tabs">
+          <button class="detail-tab active" type="button" data-detail-tab="explain">Explanation</button>
+          <button class="detail-tab" type="button" data-detail-tab="json">Raw JSON</button>
+        </div>
         <div style="padding: 0 12px 12px;">
-          <div class="label" style="margin-bottom:6px;" id="sel-payload-label">Payload</div>
-          <div class="json" id="sel-payload">{{ trace.final_answer or '—' }}</div>
+          <div class="label" style="margin-bottom:6px;" id="sel-payload-label">Explanation</div>
+          <div class="explain" id="sel-explain"></div>
+          <div class="json" id="sel-payload" style="display:none;">{{ trace.final_answer or '—' }}</div>
         </div>
       </div>
 
       <p style="font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); padding: 0 4px;">
-        Click any node in the graph to inspect its payload.
+        Click any node in the graph to inspect what went in, what came out, and why it happened.
       </p>
 
     </aside>
@@ -461,6 +501,214 @@
     itemEl.addEventListener('blur', scheduleEvidencePopoverHide);
   }
 
+  function fmt(value) {
+    if (value === null || value === undefined || value === '') return '—';
+    if (Array.isArray(value)) return value.length ? value.join(', ') : '—';
+    if (typeof value === 'object') return JSON.stringify(value, null, 2);
+    return String(value);
+  }
+
+  function card(title, body) {
+    return `<section class="explain-card"><h4>${traceEscapeHtml(title)}</h4>${body}</section>`;
+  }
+
+  function para(text) {
+    return `<p>${traceEscapeHtml(text)}</p>`;
+  }
+
+  function kvList(items) {
+    const rows = items
+      .filter(([_, value]) => value !== undefined && value !== null && value !== '')
+      .map(([key, value]) => `<li><span class="dim">${traceEscapeHtml(key)}</span><br>${traceEscapeHtml(fmt(value))}</li>`)
+      .join('');
+    return `<ul class="explain-list">${rows || '<li>Nothing recorded.</li>'}</ul>`;
+  }
+
+  function chips(items, kind = '') {
+    const cls = kind ? ` ${kind}` : '';
+    return `<div class="chipline">${(items || []).map(item => `<span class="mini-chip${cls}">${traceEscapeHtml(item)}</span>`).join('') || '<span class="mini-chip">none</span>'}</div>`;
+  }
+
+  function explainAdversarial(ev) {
+    const p = ev.payload || {};
+    const matches = p.rule_matches || [];
+    const ruleRows = matches.length
+      ? matches.map(m => `<li>Matched <b>${traceEscapeHtml(m.matched_text)}</b><br><span class="dim">${traceEscapeHtml(m.rule)}</span></li>`).join('')
+      : '<li>No deterministic rule matched.</li>';
+    return [
+      card('What happened', para(p.detected ? 'The input was treated as adversarial or suspicious.' : 'The input passed the adversarial screen.')),
+      card('Rule matches', `<ul class="explain-list">${ruleRows}</ul>`),
+      card('Local LLM opinion', chips(p.llm_flags || [], p.llm_flags?.length ? 'bad' : 'good')),
+      card('Text checked', para(`The current user query was checked (${p.message_length || 'unknown'} chars). The redacted query is shown in the left rail.`)),
+    ].join('');
+  }
+
+  function explainPii(ev) {
+    const p = ev.payload || {};
+    const redactions = p.rules_redactions || [];
+    const rows = redactions.length
+      ? redactions.map(r => `<li>${traceEscapeHtml(r.kind)} replaced with <b>${traceEscapeHtml(r.replacement)}</b> at chars ${r.start}-${r.end}</li>`).join('')
+      : '<li>No regex redactions recorded.</li>';
+    return [
+      card('What happened', para(p.changed ? 'The user text was redacted before planning/narration.' : 'No PII redaction changed the user text.')),
+      card('Regex redactions', `<ul class="explain-list">${rows}</ul>`),
+      card('Local LLM redactions', kvList([
+        ['Additional spans', p.llm_added_spans],
+        ['Contributors', p.contributors],
+      ])),
+    ].join('');
+  }
+
+  function replacementRows(items, emptyText) {
+    if (!items || !items.length) return `<li>${traceEscapeHtml(emptyText)}</li>`;
+    return items.map(item => {
+      const aliases = item.aliases && item.aliases.length
+        ? `<br><span class="dim">Matched aliases</span> ${traceEscapeHtml(item.aliases.join(', '))}`
+        : '';
+      const length = item.length ? `<br><span class="dim">Length</span> ${traceEscapeHtml(String(item.length))}` : '';
+      return `<li><span class="dim">Internal/readable</span> ${traceEscapeHtml(item.internal || '')}<br><span class="dim">Sent outbound</span> <b>${traceEscapeHtml(item.outbound || '')}</b>${aliases}${length}</li>`;
+    }).join('');
+  }
+
+  function explainPrivacy(ev) {
+    const p = ev.payload || {};
+    const q = p.query || {};
+    const inbound = p.inbound || {};
+    const facts = p.facts || {};
+    const counts = p.available_dictionary_counts || {};
+    return [
+      card('Privacy boundary', para(p.external === false
+        ? 'The selected model is local, so no external minimization was required.'
+        : 'This shows only replacements used by this specific request. The dictionary counts below say how many records were available for matching, not how many were sent.')),
+      card('Applied customer replacements', `<ul class="explain-list">${replacementRows(p.customer_replacements, 'No customer names were replaced in this step.')}</ul>`),
+      card('Applied user replacements', `<ul class="explain-list">${replacementRows(p.user_replacements, 'No user names/display names were replaced in this step.')}</ul>`),
+      card('Applied PII redactions', `<ul class="explain-list">${replacementRows(p.pii_redactions, 'No local-LLM PII substrings were added in this step.')}</ul>`),
+      card('Available matcher dictionary', kvList([
+        ['Known customers checked', counts.customers],
+        ['Known users checked', counts.users],
+      ])),
+      card('Query sent to LLM', kvList([
+        ['Readable trace query', q.readable],
+        ['Outbound LLM query', q.outbound],
+        ['Changed', q.changed],
+      ])),
+      card('Facts sent to LLM', kvList([
+        ['Readable fact keys', facts.readable_keys],
+        ['Outbound fact keys', facts.outbound_keys],
+        ['Facts changed', facts.changed],
+      ])),
+      card('Inbound restoration', kvList([
+        ['Raw model text', inbound.raw_model_text],
+        ['Restored text', inbound.restored_text],
+        ['Changed', inbound.changed],
+      ])),
+    ].join('');
+  }
+
+  function explainHistory(ev) {
+    const p = ev.payload || {};
+    const loaded = p.loaded_turns || [];
+    const turns = loaded.length
+      ? loaded.map((t, i) => `<li><b>${traceEscapeHtml(t.role || `turn ${i + 1}`)}</b>${t.trace_ref ? ` · ${traceEscapeHtml(t.trace_ref)}` : ''}<br>${traceEscapeHtml(t.text || '')}</li>`).join('')
+      : '<li>No turn text recorded on this older trace.</li>';
+    return [
+      card('What was loaded', kvList([
+        ['Turns', p.turns],
+        ['Last customer in scope', p.last_customer],
+        ['Last issue in scope', p.last_issue],
+      ])),
+      card('Conversation context', `<ul class="explain-list">${turns}</ul>`),
+    ].join('');
+  }
+
+  function explainContext(ev) {
+    const p = ev.payload || {};
+    return [
+      card('Effective query', para(p.effective_query || 'The original user query was used.')),
+      card('History context sent forward', para(p.history_context || 'No history context was added.')),
+      card('Planner input', para(p.planner_input || 'Not recorded on this trace.')),
+    ].join('');
+  }
+
+  function explainPlan(ev) {
+    const p = ev.payload || {};
+    const steps = p.planned_steps || [];
+    const stepRows = steps.length
+      ? steps.map((s, i) => `<li><b>${i + 1}. ${traceEscapeHtml(s.step_type)}.${traceEscapeHtml(s.name)}</b><br><span class="dim">Args</span> ${traceEscapeHtml(fmt(s.arguments))}<br><span class="dim">Why</span> ${traceEscapeHtml(s.rationale || 'No rationale recorded.')}</li>`).join('')
+      : '<li>No tool or skill steps were planned.</li>';
+    return [
+      card('Planner decision', kvList([
+        ['Intent', p.intent],
+        ['Narration kind', p.narration_kind],
+        ['Write requested', p.write_requested],
+        ['Requires clarification', p.requires_clarification],
+        ['Clarification question', p.clarification_question],
+      ])),
+      card('Why these tools/skills', `<ul class="explain-list">${stepRows}</ul>`),
+      card('Planner context', para(fmt(p.planner_context || {}))),
+    ].join('');
+  }
+
+  function explainTool(ev) {
+    const p = ev.payload || {};
+    return [
+      card('Request sent to tool/API', para(fmt(p.request || 'Not recorded on this older trace.'))),
+      card('Result received', para(fmt(p.result_summary || (p.keys ? {keys: p.keys} : {})))),
+      card('Evidence added', chips(p.evidence_added || [], 'info')),
+    ].join('');
+  }
+
+  function explainSkill(ev) {
+    const p = ev.payload || {};
+    return [
+      card('Why skill ran', para('The planner selected an in-process business skill after the required facts were loaded.')),
+      card('Inputs available to skill', para(fmt(p.inputs_used || p.request || {}))),
+      card('Skill result', para(fmt(p.output_summary || {
+        risk_level: p.risk_level,
+        recommended_next_action: p.recommended_next_action,
+      }))),
+    ].join('');
+  }
+
+  function explainAction(ev) {
+    const p = ev.payload || {};
+    return [
+      card('Action gate', para(ev.event_name.includes('proposed') ? 'A write was staged for user confirmation. It was not executed yet.' : 'A proposed action/token was validated or confirmed.')),
+      card('Action details', para(fmt(p))),
+    ].join('');
+  }
+
+  function explainFinal(ev) {
+    const p = ev.payload || {};
+    return [
+      card('What the LLM used to write the answer', para(fmt(p.narration_input || {evidence: p.evidence || []}))),
+      card('Answer produced', para(p.answer_preview || TRACE_TOTALS.finalAnswer || 'No answer text recorded.')),
+      card('Evidence cited', chips(p.evidence || [], 'info')),
+    ].join('');
+  }
+
+  function explainGeneric(ev) {
+    const p = ev.payload || {};
+    return [
+      card('What happened', para(`${ev.event_name} completed with status ${ev.status}.`)),
+      card('Recorded details', para(fmt(p))),
+    ].join('');
+  }
+
+  function renderExplanation(ev) {
+    if (ev.event_name === 'adversarial.check') return explainAdversarial(ev);
+    if (ev.event_name === 'pii.redact') return explainPii(ev);
+    if (ev.event_type === 'privacy') return explainPrivacy(ev);
+    if (ev.event_name === 'history.loaded') return explainHistory(ev);
+    if (ev.event_name === 'context.built_for_planner') return explainContext(ev);
+    if (ev.event_name === 'plan.created') return explainPlan(ev);
+    if (ev.event_type === 'tool_call') return explainTool(ev);
+    if (ev.event_type === 'skill_invocation') return explainSkill(ev);
+    if (ev.event_type === 'action_proposed' || ev.event_type === 'action_confirmed' || ev.event_type === 'action_validation' || ev.event_type === 'rbac_decision') return explainAction(ev);
+    if (ev.event_type === 'final_response') return explainFinal(ev);
+    return explainGeneric(ev);
+  }
+
   function eventMetrics(ev) {
     const payload = ev.payload || {};
     const eventTokens = payload.total_tokens ?? null;
@@ -489,12 +737,23 @@
     document.getElementById('sel-tokens').textContent = metrics.tokens;
     document.getElementById('sel-cost').textContent = metrics.cost;
     document.getElementById('sel-payload-label').textContent =
-      ev.event_type === 'final_response' ? 'Final answer' : 'Payload';
+      ev.event_type === 'final_response' ? 'Final answer' : 'Step details';
+    document.getElementById('sel-explain').innerHTML = renderExplanation(ev);
     document.getElementById('sel-payload').textContent =
       ev.event_type === 'final_response'
         ? `${TRACE_TOTALS.finalAnswer}\n\nEvent payload:\n${JSON.stringify(ev.payload || {}, null, 2)}`
         : JSON.stringify(ev.payload || {}, null, 2);
   }
+  document.querySelectorAll('[data-detail-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-detail-tab]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const showJson = btn.dataset.detailTab === 'json';
+      document.getElementById('sel-explain').style.display = showJson ? 'none' : 'grid';
+      document.getElementById('sel-payload').style.display = showJson ? 'block' : 'none';
+      document.getElementById('sel-payload-label').textContent = showJson ? 'Raw JSON' : 'Explanation';
+    });
+  });
   // Pre-select last node
   const nodes = document.querySelectorAll('.tg-node');
   if (nodes.length) {

@@ -140,7 +140,7 @@ async def persist(
         llm_latency_ms=llm_latency_ms,
         tool_latency_ms=tool_latency_ms,
     )
-    for event in ledger.events:
+    for sequence, event in enumerate(ledger.events, start=1):
         await repo.insert_trace_event(
             session,
             trace_id=trace_id,
@@ -149,6 +149,8 @@ async def persist(
             payload=event.payload,
             status=event.status,
             latency_ms=event.latency_ms,
+            sequence=sequence,
+            created_at_ms=event.created_at_ms,
         )
     for call in ledger.tool_calls:
         record_tool_call(

@@ -957,6 +957,7 @@ table.tbl tr:hover td { background: var(--bg-surface-raised); }
 #otel-pop .otel-foot { margin-top: 12px; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 #otel-pop a.otel-link { color: var(--accent-bright); text-decoration: none; font-family: var(--font-mono); }
 #otel-pop a.otel-link:hover { text-decoration: underline; }
+#otel-pop .otel-note { color: var(--text-dim); font-family: var(--font-mono); }
 #otel-pop .copy-btn {
   background: var(--bg-surface-raised); border: 1px solid var(--border-medium);
   color: var(--text-secondary); border-radius: 4px; padding: 3px 8px; cursor: pointer;

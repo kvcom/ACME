@@ -27,3 +27,25 @@ def redact(text: str) -> str:
 
 def has_pii(text: str) -> bool:
     return redact(text) != text
+
+
+def redaction_report(text: str) -> list[dict[str, str | int]]:
+    """Return redaction types and spans without exposing original PII values."""
+    if not text:
+        return []
+    patterns = [
+        ('email', EMAIL_RE, '[REDACTED-EMAIL]'),
+        ('card', CARD_RE, '[REDACTED-CARD]'),
+        ('id', ID_RE, '[REDACTED-ID]'),
+        ('phone', PHONE_RE, '[REDACTED-PHONE]'),
+    ]
+    matches: list[dict[str, str | int]] = []
+    for kind, pattern, replacement in patterns:
+        for match in pattern.finditer(text):
+            matches.append({
+                'kind': kind,
+                'start': match.start(),
+                'end': match.end(),
+                'replacement': replacement,
+            })
+    return sorted(matches, key=lambda item: int(item['start']))

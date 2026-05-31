@@ -33,7 +33,23 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from acme_app.application.adversarial import check_query, validate_step, validate_step_arguments
+from acme_app.application.adversarial import (
+    check_query,
+    pattern_matches,
+    validate_step,
+    validate_step_arguments,
+)
+from acme_app.application.outbound_privacy import (
+    OutboundPrivacyContext,
+    build_privacy_context,
+    privacy_diff,
+    privacy_manifest,
+    restore_text_from_llm,
+    sanitize_facts_for_llm,
+    sanitize_text_for_llm,
+    sanitize_text_with_report,
+    translate_customer_args_to_names,
+)
 from acme_app.application.planner import create_plan
 from acme_app.application.prompts import NARRATION_PREAMBLE
 from acme_app.application.propose_confirm import (
@@ -70,7 +86,7 @@ from acme_app.policy.local_screener import (
     llm_pii_substrings,
     local_screener_available,
 )
-from acme_app.policy.pii_redactor import redact
+from acme_app.policy.pii_redactor import redact, redaction_report
 from acme_app.skills.registry import SKILLS
 
 _log = logging.getLogger(__name__)
@@ -176,6 +192,20 @@ _CUSTOMER_ALIASES = {
     'acme manufacturing': 'Acme Manufacturing Group',
 }
 
+
+_EXTERNAL_PRIVACY_INSTRUCTION = (
+    'Privacy boundary: some names have been replaced with opaque internal record '
+    'tokens before this prompt was sent to you. For planning, copy any customer '
+    'or user record token from the request exactly when a tool argument needs it. '
+    'In final answers, never mention privacy mode, record tokens, database IDs, '
+    'or ask the user to provide internal IDs; write naturally using the facts given.\n\n'
+)
+
+
+def _with_external_privacy_instruction(prompt: str) -> str:
+    return _EXTERNAL_PRIVACY_INSTRUCTION + prompt
+
+
 async def _load_recent_turns_with_pg_fallback(
     session: AsyncSession,
     username: str,
@@ -224,12 +254,107 @@ async def _load_recent_turns_with_pg_fallback(
     return turns, last_customer, last_issue
 
 
+def _recent_customer_scope(
+    recent_turns: list[dict[str, Any]],
+    privacy: OutboundPrivacyContext,
+) -> list[str]:
+    """Find customer names the user recently put in scope.
+
+    User messages are treated as more authoritative than assistant text so an
+    earlier bad answer cannot easily expand the scope with the wrong customer.
+    """
+    if not recent_turns:
+        return []
+
+    def collect(turns: list[dict[str, Any]]) -> list[str]:
+        found: list[str] = []
+        text = '\n'.join(str(turn.get('text') or '') for turn in turns)
+        for customer in privacy.customers:
+            if any(re.search(r'\b' + re.escape(alias) + r'\b', text, flags=re.I) for alias in customer.aliases):
+                found.append(customer.name)
+        return found
+
+    user_found = collect([turn for turn in recent_turns[-8:] if turn.get('role') == 'user'])
+    if len(user_found) > 1:
+        return user_found
+
+    combined = collect(recent_turns[-6:])
+    return combined
+
+
+def _recent_issue_scope(recent_turns: list[dict[str, Any]]) -> list[str]:
+    refs: list[str] = []
+    for turn in recent_turns[-6:]:
+        for match in _ISSUE_REF_RE.finditer(str(turn.get('text') or '')):
+            ref = match.group(0).upper()
+            if ref not in refs:
+                refs.append(ref)
+    return refs[:8]
+
+
 def _new_trace_ref() -> str:
     return f'TRC-{uuid.uuid4().hex[:8].upper()}'
 
 
 def _summarise(output: dict[str, Any]) -> dict[str, Any]:
     return ledger_mod.summarise_output(output)
+
+
+def _evidence_from_tool_output(tool_name: str, output: dict[str, Any]) -> list[str]:
+    if tool_name == 'get_customer_profile' and output.get('customer_id'):
+        return [f'customer:{output["customer_id"]}']
+    if tool_name == 'get_open_issues':
+        return [
+            f'issue:{issue["issue_ref"]}'
+            for issue in output.get('issues', [])
+            if isinstance(issue, dict) and issue.get('issue_ref')
+        ]
+    if tool_name in {'summarise_issue_history', 'recommend_next_action'}:
+        return list(output.get('evidence') or [])
+    return []
+
+
+def _customer_fact_key(arguments: dict[str, Any], output: dict[str, Any] | None = None) -> str:
+    output = output or {}
+    return str(
+        output.get('name')
+        or arguments.get('customer_name')
+        or arguments.get('customer_id')
+        or 'unknown_customer'
+    ).strip()
+
+
+def _ensure_customer_fact(facts: dict[str, Any], key: str) -> dict[str, Any]:
+    customers = facts.setdefault('customer_facts', {})
+    if not isinstance(customers, dict):
+        customers = {}
+        facts['customer_facts'] = customers
+    return customers.setdefault(key, {'customer_name': key})
+
+
+def _comparison_customers(facts: dict[str, Any]) -> list[dict[str, Any]]:
+    customers = facts.get('customer_facts')
+    if not isinstance(customers, dict):
+        return []
+    rows: list[dict[str, Any]] = []
+    for key, fact in customers.items():
+        if not isinstance(fact, dict):
+            continue
+        profile = fact.get('customer_profile') or {}
+        issues = fact.get('open_issues') or []
+        skill_output = fact.get('skill_output') or {}
+        if profile or issues or skill_output:
+            rows.append({
+                'customer_name': profile.get('name') or key,
+                'profile': profile,
+                'open_issues': issues,
+                'risk_level': skill_output.get('risk_level'),
+                'risk_factors': skill_output.get('risk_factors', []),
+                'recommended_next_action': skill_output.get('recommended_next_action'),
+                'executive_summary': skill_output.get('executive_summary'),
+                'missing_information': skill_output.get('missing_information', []),
+            })
+    return rows
 
 
 def _explicit_write_intent(query: str) -> bool:
@@ -573,7 +698,10 @@ async def run_agent(
                       'detected': adversarial,
                       'contributors': adv_contributors,
                       'rules_flags': rules_flags,
-                      'llm_flags': llm_adv_flags or []},
+                      'rule_matches': pattern_matches(query),
+                      'llm_flags': llm_adv_flags or [],
+                      'llm_checked': llm_adv_flags is not None,
+                      'message_length': len(query)},
                      status='blocked' if (adversarial or not ok_length) else 'ok')
         await _emit(event_sink, 'adversarial', {'flags': flags, 'detected': adversarial})
 
@@ -589,8 +717,20 @@ async def run_agent(
                      {'changed': query_redacted != query,
                       'length': len(query),
                       'rules_changed': rules_redacted != query,
+                      'rules_redactions': redaction_report(query),
                       'llm_added_spans': len(llm_pii_subs or []),
+                      'llm_substrings_redacted': [
+                          {'length': len(s), 'replacement': '[REDACTED-LLM]'}
+                          for s in (llm_pii_subs or [])
+                      ],
                       'contributors': pii_contributors})
+
+        privacy = build_privacy_context(
+            model_key_or_provider=provider_name,
+            customers=await repo.list_customers(session),
+            users=await repo.list_users(session),
+            pii_substrings=llm_pii_subs,
+        )
 
         if not ok_length:
             return await _finalise_blocked(
@@ -610,11 +750,21 @@ async def run_agent(
             ledger.event('memory', 'history.loaded',
                          {'turns': len(recent_turns),
                           'last_customer': (last_customer or {}).get('name'),
-                          'last_issue': last_issue})
+                          'last_issue': last_issue,
+                          'loaded_turns': [
+                              {
+                                  'role': turn.get('role'),
+                                  'text': redact(turn.get('text') or '')[:300],
+                                  'trace_ref': turn.get('trace_ref'),
+                              }
+                              for turn in recent_turns[-6:]
+                          ]})
 
         # Build a transcript snippet for the LLM so short follow-ups ("yes",
         # "that one", pronouns) resolve against the actual previous turn.
         history_text = ''
+        recent_customers = _recent_customer_scope(recent_turns, privacy)
+        recent_issues = _recent_issue_scope(recent_turns)
         if recent_turns:
             lines = []
             for turn in recent_turns[-6:]:
@@ -624,9 +774,13 @@ async def run_agent(
                     lines.append(f'{who}: {txt[:300]}')
             if lines:
                 history_text = 'Recent conversation:\n' + '\n'.join(lines) + '\n\n'
-        if last_customer and last_customer.get('name'):
+        if len(recent_customers) > 1:
+            history_text += f'Recent customers in scope: {", ".join(recent_customers)}\n'
+        elif last_customer and last_customer.get('name'):
             history_text += f'Last customer in scope: {last_customer["name"]}\n'
-        if last_issue:
+        if len(recent_issues) > 1:
+            history_text += f'Recent issues in scope: {", ".join(recent_issues)}\n'
+        elif last_issue and len(recent_customers) <= 1:
             history_text += f'Last issue in scope: {last_issue}\n'
         if pending:
             history_text += (
@@ -635,6 +789,34 @@ async def run_agent(
             )
         effective_query = _clarification_followup_query(query, recent_turns) or query
         enriched_query = (history_text + '\nCurrent message:\n' + effective_query) if history_text else effective_query
+        llm_sanitized = sanitize_text_with_report(enriched_query, privacy) if privacy.external else None
+        llm_enriched_query = llm_sanitized.text if llm_sanitized else enriched_query
+        trace_enriched_query = restore_text_from_llm(
+            sanitize_text_for_llm(enriched_query, privacy),
+            privacy,
+        )
+        if privacy.external:
+            ledger.event(
+                'privacy',
+                'outbound_llm.minimized',
+                {
+                    'external_model': provider_name,
+                    'customer_names_replaced_with_ids': len(llm_sanitized.customer_replacements),
+                    'user_names_replaced_with_ids': len(llm_sanitized.user_replacements),
+                    'pii_redaction_applied': query_redacted != query or bool(llm_sanitized.pii_redactions),
+                    **privacy_manifest(privacy, applied=llm_sanitized),
+                },
+            )
+            llm_enriched_query = _with_external_privacy_instruction(llm_enriched_query)
+        if history_text or effective_query != query:
+            ledger.event('memory', 'context.built_for_planner',
+                         {'history_context': trace_enriched_query.strip(),
+                          'effective_query': restore_text_from_llm(
+                              sanitize_text_for_llm(effective_query, privacy),
+                              privacy,
+                          ),
+                          'planner_input': trace_enriched_query[:3000],
+                          'outbound_planner_input': llm_enriched_query[:3000] if privacy.external else None})
 
         if pending and _looks_like_confirmation(query):
             return await _confirm_pending(
@@ -658,6 +840,8 @@ async def run_agent(
             'role': role,
             'last_customer': (last_customer or {}).get('name') if last_customer else None,
             'last_issue': last_issue,
+            'recent_customers': recent_customers,
+            'recent_issues': recent_issues,
         }
         route_decision: RouteDecision | None = None
 
@@ -683,7 +867,7 @@ async def run_agent(
                 query=query, query_redacted=query_redacted,
                 provider_name=provider_name, started_ms=started_ms,
                 event_sink=event_sink, history_text=history_text,
-                ambiguity=preplan_ambig,
+                ambiguity=preplan_ambig, privacy=privacy,
             )
 
         with tracer.start_as_current_span('agent.plan'):
@@ -700,12 +884,24 @@ async def run_agent(
                         f'Human classification resolution: handle this request as route '
                         f'"{route_decision.route}".\n\n{enriched_query}'
                     )
+                    llm_sanitized = sanitize_text_with_report(enriched_query, privacy) if privacy.external else None
+                    llm_enriched_query = llm_sanitized.text if llm_sanitized else enriched_query
+                    trace_enriched_query = restore_text_from_llm(
+                        sanitize_text_for_llm(enriched_query, privacy),
+                        privacy,
+                    )
+                    if privacy.external:
+                        llm_enriched_query = (
+                            _with_external_privacy_instruction(llm_enriched_query)
+                        )
                     ledger.event('agent_plan', 'classification.human_resolved',
                                  {'route': route_decision.route})
                 plan, llm_plan_response = await create_plan(
-                    enriched_query, provider_name,
+                    llm_enriched_query, provider_name,
                     context=plan_context,
                 )
+                if privacy.external:
+                    translate_customer_args_to_names(plan, privacy)
             except Exception as exc:
                 ledger.event('error', 'llm.unavailable', {'error': str(exc)}, status='error')
                 await _emit(event_sink, 'llm_unavailable', {'error': str(exc)})
@@ -728,6 +924,18 @@ async def run_agent(
         ledger.event('agent_plan', 'plan.created',
                      {'intent': plan.intent, 'steps': len(plan.steps), 'write_requested': plan.write_requested,
                       'narration_kind': plan.narration_kind,
+                      'requires_clarification': plan.requires_clarification,
+                      'clarification_question': plan.clarification_question,
+                      'planned_steps': [
+                          {
+                              'step_type': step.step_type,
+                              'name': step.name,
+                              'arguments': step.arguments,
+                              'rationale': step.rationale,
+                          }
+                          for step in plan.steps
+                      ],
+                      'planner_context': plan_context,
                       'model': llm_plan_response.model,
                       'prompt_tokens': llm_plan_response.prompt_tokens,
                       'completion_tokens': llm_plan_response.completion_tokens,
@@ -799,10 +1007,15 @@ async def run_agent(
                     tool_latency_total += latency
                     ledger.tool(name, arguments, _summarise(output), 'ok', latency)
                     ledger.event('tool_call', f'tool.{name}.complete',
-                                 {'keys': list(output.keys())[:8]}, latency_ms=latency)
+                                 {'tool': name,
+                                  'request': arguments,
+                                  'result_summary': _summarise(output),
+                                  'result_keys': list(output.keys())[:8],
+                                  'evidence_added': _evidence_from_tool_output(name, output)},
+                                 latency_ms=latency)
                     await _emit(event_sink, 'tool_complete',
                                 {'tool': name, 'summary': _summarise(output), 'latency_ms': latency})
-                    await _ingest_tool_output(name, output, facts, cumulative_evidence,
+                    await _ingest_tool_output(name, arguments, output, facts, cumulative_evidence,
                                                username, conversation_ref)
                 except MCPClientError as exc:
                     latency = int((time.perf_counter() - start_t) * 1000)
@@ -839,9 +1052,26 @@ async def run_agent(
                     start_t = time.perf_counter()
                     skill_output = _invoke_skill(step.name, step.arguments, facts, role)
                     latency = int((time.perf_counter() - start_t) * 1000)
+                if step.name == 'customer_escalation_summary':
+                    fact = _ensure_customer_fact(facts, _customer_fact_key(step.arguments))
+                    fact['skill_output'] = skill_output
                 ledger.event('skill_invocation', f'skill.{step.name}.complete',
                              {'risk_level': skill_output.get('risk_level'),
-                              'recommended_next_action': skill_output.get('recommended_next_action', {}).get('action_type')},
+                              'request': step.arguments,
+                              'inputs_used': {
+                                  'customer_profile': bool(
+                                      _ensure_customer_fact(facts, _customer_fact_key(step.arguments)).get('customer_profile')
+                                      or facts.get('customer_profile')
+                                  ),
+                                  'open_issues': len(
+                                      _ensure_customer_fact(facts, _customer_fact_key(step.arguments)).get('open_issues')
+                                      or facts.get('open_issues') or []
+                                  ),
+                                  'issue_updates': len(facts.get('all_updates') or []),
+                                  'issue_history': bool(facts.get('issue_history')),
+                              },
+                              'output_summary': _summarise(skill_output),
+                              'recommended_next_action': skill_output.get('recommended_next_action')},
                              latency_ms=latency)
                 await _emit(event_sink, 'skill_complete',
                             {'skill': step.name, 'risk_level': skill_output.get('risk_level'),
@@ -962,9 +1192,42 @@ async def run_agent(
         narration_provider = get_provider(provider_name)
         # Narration also sees the history so short follow-ups produce coherent
         # answers ("yes" → "OK, here's the briefing on Northwind").
+        comparison_customers = _comparison_customers(facts)
+        if len(comparison_customers) > 1:
+            facts['comparison_customers'] = comparison_customers
         facts['conversation_history'] = history_text or None
         try:
-            narration_response = await narration_provider.narrate(NARRATION_PREAMBLE, enriched_query, facts)
+            narration_facts = sanitize_facts_for_llm(facts, privacy) if privacy.external else facts
+            narration_response_raw = await narration_provider.narrate(
+                NARRATION_PREAMBLE,
+                llm_enriched_query,
+                narration_facts,
+            )
+            narration_response = LLMResponse(
+                text=restore_text_from_llm(narration_response_raw.text, privacy)
+                if privacy.external else narration_response_raw.text,
+                prompt_tokens=narration_response_raw.prompt_tokens,
+                completion_tokens=narration_response_raw.completion_tokens,
+                latency_ms=narration_response_raw.latency_ms,
+                model=narration_response_raw.model,
+                raw=narration_response_raw.raw,
+            )
+            if privacy.external:
+                ledger.event(
+                    'privacy',
+                    'outbound_llm.narration_payload',
+                    privacy_diff(
+                        readable_query=trace_enriched_query,
+                        outbound_query=llm_enriched_query,
+                        readable_facts=facts,
+                        outbound_facts=narration_facts,
+                        inbound_text=narration_response_raw.text,
+                        restored_text=narration_response.text,
+                        privacy=privacy,
+                        applied=llm_sanitized,
+                    ),
+                    latency_ms=narration_response_raw.latency_ms,
+                )
         except Exception as exc:
             ledger.event('error', 'llm.narrate.unavailable', {'error': str(exc)}, status='error')
             # Soft-fall back to a templated answer so the user still sees something useful.
@@ -989,6 +1252,13 @@ async def run_agent(
         evidence_list = sorted(set(cumulative_evidence))[:20]
         ledger.event('final_response', 'narration.complete',
                      {'model': narration_response.model, 'len': len(narration_response.text),
+                      'narration_input': {
+                          'query': trace_enriched_query[:3000],
+                          'outbound_query': llm_enriched_query[:3000] if privacy.external else None,
+                          'fact_keys': sorted(facts.keys()),
+                          'evidence_count': len(evidence_list),
+                      },
+                      'answer_preview': narration_response.text[:1200],
                       'prompt_tokens': narration_response.prompt_tokens,
                       'completion_tokens': narration_response.completion_tokens,
                       'total_tokens': narration_response.prompt_tokens + narration_response.completion_tokens,
@@ -1026,11 +1296,28 @@ async def run_agent(
         else:
             answer = narration_response.text
             has_evidence = bool(cumulative_evidence) or bool(facts.get('skill_output'))
-            badge = badge_for(has_evidence=has_evidence)
+            if not has_evidence and not plan.steps:
+                badge = 'Conversational'
+            else:
+                badge = badge_for(has_evidence=has_evidence)
 
+        comparison_customers = facts.get('comparison_customers') or []
         if (
             not plan.requires_clarification
             and badge != 'Permission Denied'
+            and len(comparison_customers) > 1
+            and _needs_customer_comparison_fallback(answer, comparison_customers)
+        ):
+            answer = _render_customer_comparison_answer(facts, role)
+            ledger.event(
+                'final_response',
+                'narration.quality_fallback',
+                {'reason': 'missing_customer_comparison_details', 'len': len(answer)},
+            )
+        elif (
+            not plan.requires_clarification
+            and badge != 'Permission Denied'
+            and not comparison_customers
             and _needs_customer_status_fallback(answer, facts)
         ):
             answer = _render_customer_status_answer(facts, role)
@@ -1060,6 +1347,22 @@ async def run_agent(
             auto_route_confidence = getattr(route_decision, 'confidence', None)
             auto_route_source = getattr(route_decision, 'source', None)
         used_external_llm = _external_llm_used(plan_model, narration_model, auto_route_source)
+        response_risk_level = skill_output.get('risk_level')
+        response_missing_information = skill_output.get('missing_information', [])
+        if comparison_customers:
+            highest_risk_customer = max(
+                comparison_customers,
+                key=lambda row: (
+                    _risk_rank(row.get('risk_level')),
+                    max((_issue_rank(issue) for issue in row.get('open_issues') or []), default=0),
+                ),
+            )
+            response_risk_level = highest_risk_customer.get('risk_level')
+            response_missing_information = list(dict.fromkeys(
+                str(item)
+                for row in comparison_customers
+                for item in (row.get('missing_information') or [])
+            ))
 
         # Order matters: the conversation row MUST exist before insert_trace runs,
         # otherwise the FK lookup in repositories.insert_trace returns NULL and the
@@ -1116,8 +1419,8 @@ async def run_agent(
             proposed_action=proposed_dto,
             tools_called=tools_called,
             skills_invoked=skills_invoked,
-            risk_level=skill_output.get('risk_level'),
-            missing_information=skill_output.get('missing_information', []),
+            risk_level=response_risk_level,
+            missing_information=response_missing_information,
             cost_usd=cost_usd,
             total_tokens=prompt_tokens + completion_tokens,
             latency_ms=latency_ms,
@@ -1136,6 +1439,7 @@ async def run_agent(
 
 async def _ingest_tool_output(
     tool_name: str,
+    arguments: dict[str, Any],
     output: dict[str, Any],
     facts: dict[str, Any],
     cumulative_evidence: list[str],
@@ -1156,6 +1460,8 @@ async def _ingest_tool_output(
     )
 
     if tool_name == 'get_customer_profile':
+        requested_key = _customer_fact_key(arguments, output)
+        fact = _ensure_customer_fact(facts, requested_key)
         if output.get('multiple_matches'):
             # Only flag ambiguity if no earlier call already resolved a customer.
             if not have_resolved_customer:
@@ -1164,8 +1470,11 @@ async def _ingest_tool_output(
                     'queried': output.get('queried'),
                     'matches': output.get('matches', []),
                 }
+            fact['customer_profile'] = output
         elif output.get('name'):
             facts['customer_profile'] = output
+            fact = _ensure_customer_fact(facts, output.get('name') or requested_key)
+            fact['customer_profile'] = output
             # A successful unique match clears any earlier ambiguity hint —
             # the agent has now confirmed which customer is in scope.
             facts.pop('ambiguous_customer', None)
@@ -1174,7 +1483,10 @@ async def _ingest_tool_output(
         else:
             # not_found path
             facts['customer_profile'] = output
+            fact['customer_profile'] = output
     elif tool_name == 'get_open_issues':
+        requested_key = _customer_fact_key(arguments, output)
+        fact = _ensure_customer_fact(facts, requested_key)
         if output.get('multiple_matches'):
             if not have_resolved_customer:
                 facts['ambiguous_customer'] = {
@@ -1182,8 +1494,12 @@ async def _ingest_tool_output(
                     'matches': output.get('matches', []),
                 }
             facts['open_issues'] = []
+            fact['open_issues'] = []
         else:
             facts['open_issues'] = output.get('issues', [])
+            fact['open_issues'] = output.get('issues', [])
+            if output.get('customer_id'):
+                fact['customer_id'] = output.get('customer_id')
             for issue in output.get('issues', []):
                 cumulative_evidence.append(f'issue:{issue.get("issue_ref")}')
             issues = output.get('issues') or []
@@ -1214,9 +1530,10 @@ def _invoke_skill(
 ) -> dict[str, Any]:
     skill = SKILLS[skill_name]
     if skill_name == 'customer_escalation_summary':
+        fact = _ensure_customer_fact(facts, _customer_fact_key(arguments))
         return skill(
-            customer=facts.get('customer_profile') or {'name': arguments.get('customer_name', '')},
-            issues=facts.get('open_issues', []),
+            customer=fact.get('customer_profile') or facts.get('customer_profile') or {'name': arguments.get('customer_name', '')},
+            issues=fact.get('open_issues', facts.get('open_issues', [])),
             updates=facts.get('all_updates', []),
             actor_role=role,
         )
@@ -1262,6 +1579,130 @@ def _needs_customer_status_fallback(answer: str | None, facts: dict[str, Any]) -
         return True
 
     return False
+
+
+def _needs_customer_comparison_fallback(
+    answer: str | None,
+    comparison_customers: list[dict[str, Any]],
+) -> bool:
+    text = (answer or '').strip()
+    if len(text) < 160:
+        return True
+
+    lower = text.lower()
+    for row in comparison_customers:
+        name = str(row.get('customer_name') or '').strip()
+        if name and name.lower() not in lower:
+            return True
+        for issue in row.get('open_issues') or []:
+            ref = str(issue.get('issue_ref') or '').strip()
+            if ref and ref.lower() not in lower:
+                return True
+
+    return not any(word in lower for word in ('more urgent', 'urgency', 'priority', 'risk'))
+
+
+def _risk_rank(risk: Any) -> int:
+    return {
+        'critical': 4,
+        'high': 3,
+        'medium': 2,
+        'low': 1,
+    }.get(str(risk or '').strip().lower(), 0)
+
+
+def _issue_rank(issue: dict[str, Any]) -> int:
+    severity = str(issue.get('severity') or '').strip().upper()
+    severity_rank = {'P1': 4, 'P2': 3, 'P3': 2, 'P4': 1}.get(severity, 0)
+    sla = str(issue.get('sla_status') or issue.get('sla') or '').strip().lower()
+    sla_rank = 2 if 'breach' in sla else 1 if 'risk' in sla else 0
+    return severity_rank * 10 + sla_rank
+
+
+def _render_customer_comparison_answer(facts: dict[str, Any], role: str) -> str:
+    rows = list(facts.get('comparison_customers') or [])
+    rows.sort(
+        key=lambda row: (
+            _risk_rank(row.get('risk_level')),
+            max((_issue_rank(issue) for issue in row.get('open_issues') or []), default=0),
+        ),
+        reverse=True,
+    )
+
+    if not rows:
+        return 'I could not find enough customer facts to compare urgency.'
+
+    top = rows[0]
+    top_name = top.get('customer_name') or 'The first customer'
+    lines: list[str] = [
+        f'### Urgency Comparison',
+        '',
+        f'**{top_name}** more urgently needs action.',
+        '',
+    ]
+
+    for row in rows:
+        name = row.get('customer_name') or 'Customer'
+        profile = row.get('profile') or {}
+        issues = row.get('open_issues') or []
+        risk = row.get('risk_level') or 'Unknown'
+        recommendation = row.get('recommended_next_action') or {}
+        tier_region = ' · '.join(str(bit) for bit in (profile.get('tier'), profile.get('region')) if bit)
+
+        lines.append(f'### {name}')
+        if tier_region:
+            lines.append(f'- {tier_region}')
+        lines.append(f'- Risk level: **{risk}**')
+
+        if issues:
+            lines.append(f'- Open issues: {len(issues)}')
+            for issue in issues:
+                ref = issue.get('issue_ref') or 'Issue'
+                title = issue.get('title') or 'Untitled issue'
+                details = [
+                    issue.get('severity'),
+                    issue.get('status'),
+                    issue.get('sla_status') or issue.get('sla'),
+                ]
+                detail_text = ', '.join(str(detail) for detail in details if detail)
+                suffix = f' ({detail_text})' if detail_text else ''
+                lines.append(f'  - **{ref}**: {title}{suffix}')
+        else:
+            lines.append('- Open issues: none found in the retrieved facts')
+
+        if recommendation:
+            action_type = str(recommendation.get('action_type') or 'FOLLOW_UP')
+            priority = recommendation.get('priority') or 'Medium'
+            rationale = recommendation.get('rationale')
+            action_label = action_type.replace('_', ' ').title()
+            if action_type == 'PREPARE_RECOVERY_PLAN' and role == 'sales_user':
+                lines.append(f'- Recommended next step: ask Support to prepare a recovery plan ({priority} priority).')
+            else:
+                lines.append(f'- Recommended next step: {action_label} ({priority} priority).')
+            if rationale:
+                lines.append(f'- Rationale: {rationale}')
+
+        lines.append('')
+
+    if len(rows) > 1:
+        runner_up = rows[1].get('customer_name') or 'the next customer'
+        top_risk = top.get('risk_level') or 'higher'
+        runner_risk = rows[1].get('risk_level') or 'lower'
+        lines.extend([
+            '### Verdict',
+            '',
+            f'- **{top_name}** is more urgent than **{runner_up}** because its risk is **{top_risk}** versus **{runner_risk}**.',
+        ])
+
+    missing = []
+    for row in rows:
+        missing.extend(str(item) for item in row.get('missing_information') or [])
+    if missing:
+        lines.extend(['', '### Confirm On The Call', ''])
+        for item in dict.fromkeys(missing):
+            lines.append(f'- {item}')
+
+    return '\n'.join(lines).strip()
 
 
 def _render_customer_status_answer(facts: dict[str, Any], role: str) -> str:
@@ -1527,6 +1968,7 @@ async def _handle_preplan_ambiguity(
     event_sink: EventSink,
     history_text: str,
     ambiguity: dict[str, Any],
+    privacy: OutboundPrivacyContext,
 ) -> ChatResponse:
     """Short-circuit path for queries the orchestrator knows are ambiguous
     before any LLM planning. We still call narrate so the answer is composed
@@ -1557,11 +1999,39 @@ async def _handle_preplan_ambiguity(
 
     narration_provider = get_provider(provider_name)
     try:
-        narration_response = await narration_provider.narrate(
+        llm_user_prompt = f'{history_text}\nCurrent message:\n{query}' if history_text else query
+        llm_user_prompt = sanitize_text_for_llm(llm_user_prompt, privacy) if privacy.external else llm_user_prompt
+        llm_facts = sanitize_facts_for_llm(facts, privacy) if privacy.external else facts
+        narration_response_raw = await narration_provider.narrate(
             NARRATION_PREAMBLE,
-            f'{history_text}\nCurrent message:\n{query}' if history_text else query,
-            facts,
+            llm_user_prompt,
+            llm_facts,
         )
+        narration_response = LLMResponse(
+            text=restore_text_from_llm(narration_response_raw.text, privacy)
+            if privacy.external else narration_response_raw.text,
+            prompt_tokens=narration_response_raw.prompt_tokens,
+            completion_tokens=narration_response_raw.completion_tokens,
+            latency_ms=narration_response_raw.latency_ms,
+            model=narration_response_raw.model,
+            raw=narration_response_raw.raw,
+        )
+        if privacy.external:
+            ledger.event(
+                'privacy',
+                'outbound_llm.narration_payload',
+                privacy_diff(
+                    readable_query=query_redacted,
+                    outbound_query=llm_user_prompt,
+                    readable_facts=facts,
+                    outbound_facts=llm_facts,
+                    inbound_text=narration_response_raw.text,
+                    restored_text=narration_response.text,
+                    privacy=privacy,
+                    applied=sanitize_text_with_report(llm_user_prompt, privacy) if privacy.external else None,
+                ),
+                latency_ms=narration_response_raw.latency_ms,
+            )
         narrated = (narration_response.text or '').strip()
     except Exception as exc:
         ledger.event('error', 'llm.narrate.unavailable', {'error': str(exc)}, status='error')

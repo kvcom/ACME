@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     otel_exporter_otlp_endpoint: str = 'http://otel-collector:4318'
     otel_service_name: str = 'acme-app'
     otel_jaeger_ui_url: str = 'http://localhost:16686'
+    otel_jaeger_query_url: str = 'http://jaeger:16686'
 
     confirmation_hmac_secret: str = 'dev-only-secret-change-me'
     debug_endpoints_enabled: bool = True

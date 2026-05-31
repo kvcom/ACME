@@ -23,6 +23,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from sqlalchemy import text
@@ -82,6 +83,21 @@ def _serialise(value: Any) -> Any:
         # JSONB column already comes back as native dict/list; pass through.
         return value
     return value
+
+
+async def _jaeger_trace_available(otel_trace_id: str | None) -> bool:
+    if not otel_trace_id:
+        return False
+    base_url = settings.otel_jaeger_query_url.rstrip('/')
+    try:
+        async with httpx.AsyncClient(timeout=1.5) as client:
+            resp = await client.get(f'{base_url}/api/traces/{otel_trace_id}')
+        if resp.status_code != 200:
+            return False
+        data = resp.json()
+        return bool(data.get('data'))
+    except Exception:
+        return False
 
 
 async def _query_rows(
@@ -274,9 +290,14 @@ async def otel_trace_detail(
         {'tid': trace['id']},
     )).mappings().all()
 
+    jaeger_available = await _jaeger_trace_available(otel_trace_id)
     return {
         'otel_trace_id': otel_trace_id,
-        'jaeger_url': f"{settings.otel_jaeger_ui_url.rstrip('/')}/trace/{otel_trace_id}",
+        'jaeger_url': (
+            f"{settings.otel_jaeger_ui_url.rstrip('/')}/trace/{otel_trace_id}"
+            if jaeger_available else ''
+        ),
+        'jaeger_available': jaeger_available,
         'trace_ref': trace['trace_ref'],
         'detected_intent': trace['detected_intent'],
         'final_status': trace['final_status'],

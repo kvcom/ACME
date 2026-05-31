@@ -1,7 +1,7 @@
 from acme_app.evaluation.eval_cases import EVAL_CASES
 from acme_app.evaluation.scoring import score
 from acme_app.evaluation.variance import aggregate
-from acme_app.api.routes_eval import _require_admin
+from acme_app.api.routes_eval import _case_sort_key, _require_admin
 from acme_app.auth.current_user import CurrentUser
 from fastapi import HTTPException
 import pytest
@@ -10,6 +10,13 @@ import pytest
 def test_thirteen_cases():
     ids = [c.id for c in EVAL_CASES]
     assert ids == [f'case_{i}' for i in range(1, 14)]
+
+
+def test_eval_case_sort_is_numeric():
+    ids = ['case_1', 'case_10', 'case_11', 'case_2', 'case_3']
+    assert sorted(ids, key=_case_sort_key) == [
+        'case_1', 'case_2', 'case_3', 'case_10', 'case_11'
+    ]
 
 
 def test_adversarial_case_marked():
