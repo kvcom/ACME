@@ -1,6 +1,6 @@
 # Acme Operations Assistant
 
-A local, Dockerised, end-to-end prototype of an agentic enterprise assistant for a fictional company called Acme Operations. Built as a five-day FDE technical assessment for a Director-level AI engineering role.
+A local, Dockerised, end-to-end prototype of an agentic enterprise assistant for a fictional company called **Acme Operations**. Built as the take-home technical assessment for an **Applied AI Engineer** role: the brief asks for a minimal working agentic assistant with Keycloak auth, PostgreSQL, Redis, an MCP server, a reusable Skill, Docker Compose, evaluation and observability — all running locally.
 
 ## Design principles
 
@@ -14,6 +14,25 @@ The prototype is organised around one idea — **the LLM advises, deterministic 
 - **Modular monolith with adapter isolation.** One FastAPI app with explicit `domain`/`application`/`infrastructure`/`api` boundaries; the LLM provider, MCP client and Keycloak validator each sit behind a clean interface.
 
 The **Evidence-to-Action Decision Graph** in the trace viewer is the synthesis: every AI-assisted decision records who acted, why, on what evidence, under what permissions, and with what outcome.
+
+## Brief requirements → where they are met
+
+Every component the brief mandates (Section 4) is present. This table is the fastest way for an assessor to verify coverage.
+
+| Brief requirement (Section 4) | Status | Where it lives |
+|---|---|---|
+| 4.1 LLM agent with **dynamic tool selection** (4 minimum tools) | ✅ | [planner.py](src/acme_app/application/planner.py), [orchestrator.py](src/acme_app/application/orchestrator.py); tools: `get_customer_profile`, `get_open_issues`, `summarise_issue_history`, `recommend_next_action` (+4 more) |
+| 4.2 At least one **MCP server** | ✅ | Custom Acme MCP server, [mcp_server/](mcp_server) — 8 governed business tools, separate container |
+| 4.3 At least one reusable **Skill** | ✅ | [skills/](src/acme_app/skills) — Customer Escalation Summary (the brief's suggested Skill) + Closure Readiness Check |
+| 4.4 **Keycloak** auth + RBAC (`sales_user` / `support_user` / `admin`) | ✅ | Keycloak container + realm import; [auth/](src/acme_app/auth), [policy/rbac.py](src/acme_app/policy/rbac.py) |
+| 4.5 **Docker Compose**, one command, all services | ✅ | `docker compose up --build` — app, mcp-server, postgres, redis, keycloak (+ otel/jaeger/prometheus/grafana) |
+| 4.6 **PostgreSQL** with `customers`, `issues`, `issue_updates`, `next_actions`, `users`/`user_roles` + seed data | ✅ | [infra/postgres/init.sql](infra/postgres/init.sql), [seed.sql](infra/postgres/seed.sql) — all five tables + more |
+| 4.7 **Redis** for memory / cache | ✅ | [redis_memory.py](src/acme_app/infrastructure/redis_memory.py) — conversation context, pending actions, lookup + tool-result caches |
+| 4.8 **Evaluation** (5–10 questions: tool selection, grounding, RBAC, action reasonableness) | ✅ (18 cases) | [evaluation/](src/acme_app/evaluation), [EVAL_RESULTS.md](EVAL_RESULTS.md) |
+| 4.8 **Observability** (tool logs, traces, error logs, latency) + bonus OTel/custom viewer | ✅ | `tool_call_logs`, `agent_traces`, `trace_events`; OpenTelemetry → Jaeger/Prometheus; custom Decision Trace Viewer |
+| 4.9 **AI coding tool usage** documented | ✅ | [AI_USAGE.md](AI_USAGE.md), [prompts/](prompts) |
+
+**Deliverables (Section 5):** (1) this repository; (2) this README — setup, architecture, trade-offs, AI usage; (3) [ARCHITECTURE.md](ARCHITECTURE.md) — system diagram + data flows; (4) [EVAL_RESULTS.md](EVAL_RESULTS.md) — eval output with commentary; (5) [AI_USAGE.md](AI_USAGE.md). No mandated component is missing or mocked; trade-offs on simplified components are in [DECISION_LOG.md](DECISION_LOG.md).
 
 ## What this prototype demonstrates
 
@@ -32,6 +51,10 @@ The **Evidence-to-Action Decision Graph** in the trace viewer is the synthesis: 
 | Cost and token observability | Every trace records both; visible in `/traces` and trace detail |
 | OpenTelemetry spans + custom trace viewer with Evidence-to-Action graph | [otel.py](src/acme_app/observability/otel.py), [trace_detail.html](src/acme_app/templates/trace_detail.html) |
 | 18-case evaluation suite × 3 runs, variance reported | [evaluation/](src/acme_app/evaluation), [EVAL_RESULTS.md](EVAL_RESULTS.md) |
+| Postgres as authorization source of truth (Keycloak authenticates, Postgres holds roles) | [auth/role_store.py](src/acme_app/auth/role_store.py), `users` / `user_roles` |
+| Append-only data model (lifecycle flags, never DELETE) + GDPR redaction function | [infra/postgres/init.sql](infra/postgres/init.sql), `redact_user_pii()` |
+| Data-driven action catalogue + recommendation rules (change agent behaviour with no code) | `action_catalogue`, `action_recommendation_rules`, [action_catalogue.py](src/acme_app/policy/action_catalogue.py) |
+| Admin DB Explorer — relationship drill-down, realtime (WebSocket), validated edit/append with AI-assisted record generation | `/db-explorer`, [routes_db_explorer.py](src/acme_app/api/routes_db_explorer.py) |
 
 ## Architecture diagram
 
@@ -39,11 +62,11 @@ The **Evidence-to-Action Decision Graph** in the trace viewer is the synthesis: 
 flowchart TD
     U[User] --> UI[Acme Assistant UI]
     UI --> API[FastAPI App]
-    API --> KC[Keycloak]
-    API --> ADV[Adversarial Check]
-    ADV --> PII[PII Redactor]
+    API --> KC[Keycloak  - authentication]
+    API --> ADV[Adversarial Check  - rules + optional local LLM]
+    ADV --> PII[PII Redactor  - rules + optional local LLM]
     PII --> AG[Agent Orchestrator]
-    AG --> LLM[LLM Provider Abstraction]
+    AG --> LLM[LLM Provider Abstraction / Model Registry]
     LLM --> ANT[Anthropic]
     LLM --> OAI[OpenAI]
     LLM --> GOO[Google Gemini]
@@ -53,11 +76,16 @@ flowchart TD
     MCP --> MCPS[Custom Acme MCP Server]
     MCPS --> PG[(PostgreSQL)]
     AG --> SK[Skills Registry]
-    AG --> POL[Policy + Action Guard]
+    AG --> POL[Policy + Action Guard  - RBAC, action catalogue, rec. rules]
     POL --> PG
     API --> TRACE[Decision Trace Viewer]
+    API --> DBX[Admin DB Explorer  - drill-down + realtime + edit]
     API --> OTEL[OpenTelemetry Collector]
+    OTEL --> JAEGER[Jaeger  - traces]
+    OTEL --> PROM[Prometheus -> Grafana  - metrics]
     TRACE --> PG
+    DBX --> PG
+    PG -. LISTEN/NOTIFY .-> API
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for sequence diagrams and the full module map.

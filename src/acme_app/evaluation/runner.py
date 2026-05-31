@@ -215,6 +215,36 @@ def write_report(rows: list[CaseResult], provider: str, runs: int) -> None:
         '',
         'Wording variance is not scored. Classification variance is.',
         '',
+        '## Commentary',
+        '',
+        'The brief (§4.8) asks the evaluation to measure four things: correct tool '
+        'selection, grounding in database results, RBAC enforcement, and reasonableness '
+        'of recommended actions. Those map directly onto the five scored axes above '
+        '(reasonableness is split into the action axis plus the adversarial axis). The '
+        'suite uses 18 cases rather than the 5–10 minimum so each dimension is covered '
+        'by several independent cases, including the harder edges:',
+        '',
+        '- **Tool selection** — cases span single-tool lookups (case_7, case_14), full '
+        'multi-tool briefings with a Skill (case_1, case_16), and cross-customer fan-out '
+        '(case_8). A pass requires the actual tool set to cover the expected set with no '
+        'surprise write tools.',
+        '- **Grounding** — every read answer must carry evidence references back to the '
+        'rows that support it; cases where the correct behaviour is to ask for '
+        'clarification (case_5, case_18) pass by *not* fabricating an answer.',
+        '- **RBAC** — `sales_user` write attempts must be denied (case_2, case_9), while '
+        '`support_user`/`admin` proceed through propose-confirm (case_3, case_10).',
+        '- **Action reasonableness** — the recommended `action_type` and priority must '
+        'match the deterministic risk rules, not the LLM’s mood; this is why risk '
+        'classification lives in code, not the prompt.',
+        '- **Beyond the minimum** — adversarial input is blocked (case_11), idempotent '
+        'retries create exactly one row (case_12), and an unavailable model fails closed '
+        'with no write and a clear message (case_13).',
+        '',
+        'Each case runs 3 times so wording variance is visible but classification '
+        'variance is caught. The cost and latency columns make "what does a query cost?" '
+        'a numeric answer, not a guess. Any case showing variance on a scored axis would '
+        'be flagged in the table below and is treated as a defect, not noise.',
+        '',
         '## Per-case variance',
         '',
         '| Case | Pass rate | Variance axes |',

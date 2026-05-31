@@ -8,7 +8,7 @@ The brief requires a minimal working agentic enterprise assistant with Keycloak,
 
 # 0. Changes from v1
 
-This version closes gaps that an experienced FDE panel would probe. The new or upgraded material:
+This version closes gaps that an experienced assessor panel would probe. The new or upgraded material:
 
 ```text
 - Adversarial input handling (prompt injection defence) is now a first-class principle and an eval case
@@ -305,7 +305,7 @@ Keep the UI functional and clear. Do not overbuild a React app.
 # 5. Target repository structure
 
 ```text
-acme-fde-assistant/
+acme-operations-assistant/
   README.md
   ARCHITECTURE.md
   AI_USAGE.md

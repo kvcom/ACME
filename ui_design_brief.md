@@ -6,9 +6,9 @@
 
 ## 1. Context
 
-I am building a prototype called the **Acme Operations Assistant** as a 5-day technical assessment for a Director-level role leading a forward-deployed AI engineering team at EY. The full development plan is in the attached `plan_v2.md`. Please read it before responding — every screen and component referenced below maps to specific features in that plan.
+I am building a prototype called the **Acme Operations Assistant** as the take-home technical assessment for an **Applied AI Engineer** role. The full development plan is in the attached `plan_v2.md`. Please read it before responding — every screen and component referenced below maps to specific features in that plan.
 
-The assessors are evaluating whether I can think and operate like a real forward-deployed AI engineering lead in an enterprise environment. The product is not a toy chatbot — it is a miniature enterprise AI platform with Keycloak auth, RBAC, MCP-exposed business tools, reusable Skills, a propose-confirm write flow, full observability with cost tracking, and an adversarial-input defense.
+The assessors are evaluating engineering judgement and communication in a realistic enterprise context. The product is not a toy chatbot — it is a miniature enterprise AI platform with Keycloak auth, RBAC, MCP-exposed business tools, reusable Skills, a propose-confirm write flow, full observability with cost tracking, and an adversarial-input defense.
 
 The UI is where the panel will *see* all of that. A weak UI hides good architecture. A strong UI makes the architecture legible without me having to explain it.
 

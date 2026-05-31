@@ -4,10 +4,10 @@
 
 ```mermaid
 flowchart LR
-    User((Operator)) --> UI[Browser UI<br/>/chat /traces /eval]
+    User((Operator)) --> UI[Browser UI<br/>/chat /traces /eval /db-explorer]
     UI --> App[FastAPI app]
-    App --> KC[(Keycloak)]
-    App --> Postgres[(PostgreSQL)]
+    App --> KC[(Keycloak<br/>authentication)]
+    App --> Postgres[(PostgreSQL<br/>business truth + roles)]
     App --> Redis[(Redis)]
     App --> MCP[Acme MCP Server]
     MCP --> Postgres
@@ -16,7 +16,10 @@ flowchart LR
     OTel --> Prom[Prometheus]
     Prom --> Grafana[Grafana]
     App --> LLM[(LLM Provider<br/>Anthropic / OpenAI / Google / Ollama)]
+    Postgres -. LISTEN/NOTIFY .-> App
 ```
+
+Authentication is Keycloak's job; **authorization (which roles a user has) is Postgres's** — Keycloak verifies the password and issues the JWT, then the app reads the role list from `users`/`user_roles`. The `LISTEN/NOTIFY` edge feeds the realtime admin DB Explorer and the hot-reload of the data-driven action catalogue.
 
 ## 2. Container diagram (Docker Compose)
 
@@ -193,3 +196,21 @@ Switching model mid-session is supported via the UI dropdown, the `model_key` re
 ## 10. Cost model
 
 `infrastructure/llm/cost_table.py` holds per-provider USD pricing. Every trace records `prompt_tokens`, `completion_tokens`, `estimated_cost_usd`, `llm_latency_ms`, `tool_latency_ms`, `total_latency_ms` so the question *"what does this cost per query?"* has a numeric answer at all times. The same low-cardinality totals are also emitted as OTel metrics (`acme_agent_*`) for operational views in Prometheus and Grafana.
+
+## 11. Data-driven configuration
+
+Two pieces of agent behaviour are configuration in Postgres rather than hard-coded constants, so they change without a deploy:
+
+- **`action_catalogue`** — the action types the agent may propose, their allowed roles, required fields and side-effect level. The app loads it at startup and hot-reloads within ~2 ms of a change via `LISTEN/NOTIFY`; the MCP server reads it with a short TTL cache. The LLM planner prompt is built from the live set.
+- **`action_recommendation_rules`** — which action to recommend in a given situation. A small rules engine evaluates active rules in priority order against the situation facts. The original hard-coded decision trees were migrated to seed rows, so behaviour is identical out of the box but now editable.
+
+The safety boundary is unchanged: the agent never invents an action, every recommendation resolves to a catalogue entry, and every write still goes through propose-confirm + RBAC.
+
+## 12. Admin surfaces
+
+- **Decision Trace Viewer** (`/traces`) — read-only Evidence-to-Action graph for every turn (covered above).
+- **Admin DB Explorer** (`/db-explorer`, admin only) — pivot drill-down across FK/reverse-FK relationships with columns introspected live from the schema; realtime updates pushed over WebSocket from Postgres triggers; and validated edit/append for a curated set of tables (audit tables stay read-only). All writes are `INSERT`/`UPDATE` only, preserving the append-only invariant. A row-level AI assist can draft one consistent sample record using the local model.
+
+## 13. Append-only data model
+
+The application emits only `INSERT`/`UPDATE`, never `DELETE`. Lifecycle is a column (`status`, `deleted_at`, `is_active`). The audit tables are strictly immutable. Because users are never deleted, every actor column carries both a live `user_id` FK and a historical text snapshot, so the ER graph is fully connected and the audit trail can never be rewritten. GDPR erasure is a `redact_user_pii()` stored function that overwrites PII in place rather than deleting rows.
