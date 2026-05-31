@@ -434,7 +434,12 @@ EDIT_SPEC: dict[str, dict[str, 'ColumnEdit']] = {
         'tier':                  ColumnEdit('enum', options=_TIER),
         'region':                ColumnEdit('enum', options=_REGION),
         'customer_timezone':     ColumnEdit('enum', options=_TIMEZONE),
-        'account_owner':         ColumnEdit('text', required=False, placeholder='Owner name'),
+        # account_owner is a TEXT column storing a person's display name, not a
+        # real FK — but we surface a dropdown of existing user display names so
+        # the operator picks rather than types. Stored as the display string.
+        # Required at the UI level: every customer must have an owner (the DB
+        # column stays nullable for backward compat, but the explorer gates it).
+        'account_owner':         ColumnEdit('fk', fk=('users', 'display_name', 'display_name')),
         'status':                ColumnEdit('enum', options=_CUSTOMER_STATUS),
         'created_at':            ColumnEdit('system', auto='now'),
     },
@@ -447,7 +452,7 @@ EDIT_SPEC: dict[str, dict[str, 'ColumnEdit']] = {
         'severity':              ColumnEdit('enum', options=_SEVERITY),
         'status':                ColumnEdit('enum', options=_ISSUE_STATUS),
         'sla_status':            ColumnEdit('enum', options=_SLA),
-        'owner':                 ColumnEdit('text', required=False, placeholder='Owner name'),
+        'owner':                 ColumnEdit('fk', fk=('users', 'display_name', 'display_name'), required=False),
         'opened_at':             ColumnEdit('system', auto='now'),
         'updated_at':            ColumnEdit('system', auto='now'),
     },
@@ -456,7 +461,9 @@ EDIT_SPEC: dict[str, dict[str, 'ColumnEdit']] = {
         'issue_id':              ColumnEdit('fk', fk=('issues', 'id', 'issue_ref')),
         'update_text':           ColumnEdit('text', ai=True, placeholder='Update note'),
         'update_type':           ColumnEdit('enum', options=_UPDATE_TYPE),
-        'created_by':            ColumnEdit('text', required=False, placeholder='author'),
+        # Author of the update. NOT NULL → required. Dropdown of users
+        # (shows display name, stores username, matching existing data).
+        'created_by':            ColumnEdit('fk', fk=('users', 'username', 'display_name')),
         'created_at':            ColumnEdit('system', auto='now'),
     },
     'users': {

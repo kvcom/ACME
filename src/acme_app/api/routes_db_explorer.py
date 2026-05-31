@@ -350,8 +350,8 @@ async def _fk_options(session: AsyncSession, fk: tuple[str, str, str]) -> list[d
     target, value_col, label_col = fk
     _validate_table(target)
     rows = (await session.execute(
-        text(f'SELECT {value_col}::text AS v, {label_col}::text AS l '  # noqa: S608 — allow-listed identifiers
-             f'FROM {target} ORDER BY {label_col} LIMIT 500'),
+        text(f'SELECT DISTINCT {value_col}::text AS v, {label_col}::text AS l '  # noqa: S608 — allow-listed identifiers
+             f'FROM {target} WHERE {value_col} IS NOT NULL ORDER BY l LIMIT 500'),
     )).mappings().all()
     return [{'value': r['v'], 'label': r['l']} for r in rows]
 
@@ -610,6 +610,141 @@ async def _ai_field_suggestion(table: str, column: str, context: dict[str, Any])
         'display_name': 'New User',
         'email': 'new.user@example.local',
     }.get(column, f'Sample {column}')
+
+
+class AiGenRowInput(BaseModel):
+    table: str
+
+
+@router.post('/ai-generate-row')
+async def ai_generate_row(
+    payload: AiGenRowInput,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """Generate ONE complete, internally-consistent sample record for a table
+    in a single LLM call (D-021) — so e.g. the email matches the name, the
+    issue description matches its title/severity. Returns storable values for
+    every user-editable field, validated against enums/FKs. The user reviews,
+    tweaks, and confirms — nothing is written here."""
+    _require_admin(user)
+    _require_editable(payload.table)
+    await resolve_columns()
+    values = await _ai_generate_record(session, payload.table)
+    return {'table': payload.table, 'values': values}
+
+
+async def _ai_generate_record(session: AsyncSession, table: str) -> dict[str, Any]:
+    from acme_app.application.db_explorer import EDIT_SPEC
+    spec = EDIT_SPEC[table]
+
+    # Describe each user-editable field + its allowed values. For FK fields we
+    # ask the model to choose by LABEL (never invent a UUID), then map back.
+    field_lines: list[str] = []
+    fk_label_to_value: dict[str, dict[str, str]] = {}
+    enum_opts: dict[str, list[str]] = {}
+    arr_opts: dict[str, list[str]] = {}
+    fk_labels: dict[str, list[str]] = {}
+    kinds: dict[str, str] = {}
+    for col, ce in spec.items():
+        if ce.kind == 'system':
+            continue
+        kinds[col] = ce.kind
+        if ce.kind == 'fk' and ce.fk:
+            opts = await _fk_options(session, ce.fk)
+            fk_label_to_value[col] = {o['label']: o['value'] for o in opts}
+            fk_labels[col] = [o['label'] for o in opts]
+            field_lines.append(f'- {col}: choose exactly ONE label from {fk_labels[col][:25]}')
+        elif ce.kind == 'enum':
+            enum_opts[col] = list(ce.options)
+            field_lines.append(f'- {col}: exactly ONE of {list(ce.options)}')
+        elif ce.kind == 'text[]':
+            arr_opts[col] = list(ce.options)
+            field_lines.append(f'- {col}: a JSON array, subset of {list(ce.options)} (at least one)')
+        elif ce.kind == 'bool':
+            field_lines.append(f'- {col}: true or false')
+        elif ce.kind == 'int':
+            field_lines.append(f'- {col}: a small integer')
+        elif ce.kind == 'json':
+            field_lines.append(f'- {col}: a small JSON object, e.g. {{"severity":"P1"}}')
+        else:
+            field_lines.append(f'- {col}: a short, realistic value')
+
+    system = (
+        'You generate ONE realistic, internally CONSISTENT sample record for a row '
+        'in an enterprise support database. All fields must agree with each other '
+        '(e.g. an email derives from the name; an issue description matches its '
+        'title and severity). Respect the allowed values exactly. '
+        'Return ONLY a JSON object mapping field name to value — no prose, no markdown.'
+    )
+    user_prompt = (
+        f'Table: {table}\nFields:\n' + '\n'.join(field_lines) +
+        '\n\nReturn a single JSON object with one key per field above.'
+    )
+
+    raw: dict[str, Any] = {}
+    try:
+        from acme_app.infrastructure.llm.model_registry import MODEL_REGISTRY
+        from acme_app.infrastructure.llm.providers.ollama_provider import OllamaProvider
+        mspec = MODEL_REGISTRY.get('ollama-llama')
+        if mspec and settings.ollama_base_url:
+            provider = OllamaProvider(model=mspec.model)
+            resp = await asyncio.wait_for(provider.narrate(system, user_prompt, {}), timeout=40.0)
+            raw = _parse_json_blob(resp.text) or {}
+    except Exception as exc:
+        _log.warning('ai-generate-row local model failed (%s)', type(exc).__name__)
+
+    # Validate / coerce every field to a storable, valid value. Anything the
+    # model got wrong or omitted is filled with a sensible valid fallback so
+    # the populated form is always internally valid.
+    import random
+    out: dict[str, Any] = {}
+    for col, kind in kinds.items():
+        v = raw.get(col)
+        if kind == 'fk':
+            labels = fk_labels.get(col, [])
+            mapping = fk_label_to_value.get(col, {})
+            if v in mapping:
+                out[col] = mapping[v]
+            elif labels:
+                out[col] = mapping[random.choice(labels)]
+        elif kind == 'enum':
+            opts = enum_opts.get(col, [])
+            out[col] = v if v in opts else (random.choice(opts) if opts else None)
+        elif kind == 'text[]':
+            opts = arr_opts.get(col, [])
+            chosen = [x for x in (v if isinstance(v, list) else []) if x in opts]
+            out[col] = chosen or ([random.choice(opts)] if opts else [])
+        elif kind == 'bool':
+            out[col] = bool(v) if isinstance(v, bool) else str(v).lower() in ('true', '1', 'yes')
+        elif kind == 'int':
+            try:
+                out[col] = int(v)
+            except (TypeError, ValueError):
+                out[col] = random.randint(10, 90)
+        elif kind == 'json':
+            out[col] = json.dumps(v) if isinstance(v, (dict, list)) else (v if isinstance(v, str) else '{}')
+        else:  # text
+            out[col] = str(v).strip() if v not in (None, '') else f'Sample {col}'
+    return out
+
+
+def _parse_json_blob(text: str) -> dict[str, Any] | None:
+    s = (text or '').strip()
+    import re as _re
+    m = _re.fullmatch(r'```(?:json)?\s*(.*?)\s*```', s, _re.DOTALL)
+    if m:
+        s = m.group(1).strip()
+    # Grab the first {...} block if there's surrounding chatter.
+    if not s.startswith('{'):
+        i, j = s.find('{'), s.rfind('}')
+        if i >= 0 and j > i:
+            s = s[i:j + 1]
+    try:
+        d = json.loads(s)
+        return d if isinstance(d, dict) else None
+    except (TypeError, ValueError):
+        return None
 
 
 # ─── WebSocket: realtime push of (table, op, id) events ─────────────────────

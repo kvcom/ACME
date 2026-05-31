@@ -36,6 +36,11 @@
   --color-info-dim:    rgba(96, 165, 250, 0.85);
   --color-info-bg:     rgba(96, 165, 250, 0.10);
 
+  /* Semantic aliases used across the trace viewer + DB Explorer. "grounded"
+     == success/green (== active), "denied" == failure/red (== danger). */
+  --color-grounded-dim: rgba(52, 211, 153, 0.90);
+  --color-denied-dim:   rgba(251, 113, 133, 0.90);
+
   /* Brand accent · terracotta · single-accent system
      Used for: primary buttons, brand mark, selected state, action-proposed,
      trace-link affordance. NEVER blue per brief (overused in AI products). */

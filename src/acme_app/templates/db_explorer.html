@@ -75,61 +75,83 @@
     }
 
     /* ── Edit / append UI (D-021) ────────────────────────────────────────── */
-    /* Floating action button — circular, pinned bottom-right, pencil glyph.
-       Never confused with the inline drill-down "+" buttons. Shown only when
-       the current root table is editable. */
-    .fab-add {
-      position: fixed; right: 28px; bottom: 28px; z-index: 60;
-      width: 52px; height: 52px; border-radius: 50%;
-      background: var(--accent); color: #1a1206; border: 0; cursor: pointer;
-      font-size: 20px; line-height: 1; display: none;
-      align-items: center; justify-content: center;
-      box-shadow: 0 6px 20px rgba(217,119,87,0.45), 0 2px 6px rgba(0,0,0,0.4);
-      transition: transform 120ms, background 120ms;
+    /* "New record" button by the header — distinct pencil glyph, never a bare
+       "+", so it doesn't read as a drill-down control. */
+    .add-inline-btn {
+      margin-left: 14px;
+      background: var(--accent); color: #1a1206; border: 0;
+      border-radius: var(--radius-md); padding: 5px 12px; cursor: pointer;
+      font-family: var(--font-ui); font-size: 11px; font-weight: 600;
+      letter-spacing: 0.03em; white-space: nowrap;
     }
-    .fab-add.show { display: flex; }
-    .fab-add:hover { background: var(--accent-bright); transform: translateY(-2px) scale(1.05); }
-    .fab-add:active { transform: translateY(0) scale(0.98); }
-    /* Tooltip label that fades in on hover. */
-    .fab-add::after {
-      content: 'Add record'; position: absolute; right: 60px; white-space: nowrap;
-      background: #15151a; color: var(--text-secondary); border: 1px solid var(--border-medium);
-      border-radius: 6px; padding: 5px 10px; font-family: var(--font-ui); font-size: 11px;
-      opacity: 0; transform: translateX(6px); transition: opacity 120ms, transform 120ms;
-      pointer-events: none;
+    .add-inline-btn:hover { background: var(--accent-bright); }
+    .add-inline-btn:disabled { opacity: 0.5; cursor: default; }
+
+    /* When "New record" is pressed it is replaced by these Confirm / Cancel
+       buttons in the same header spot, and an editable (fields-only) row
+       appears between the header and the first data row. */
+    .inline-controls { display: inline-flex; align-items: center; gap: 6px; margin-left: 14px; }
+    .inline-controls button {
+      border: 0; border-radius: var(--radius-md); padding: 5px 12px; cursor: pointer;
+      font-family: var(--font-ui); font-size: 11px; font-weight: 600; letter-spacing: 0.03em;
     }
-    .fab-add:hover::after { opacity: 1; transform: translateX(0); }
-    /* The add-record form card sits at the top of the grid. */
-    .add-form {
-      border: 1px solid var(--accent-border); border-radius: var(--radius-md);
-      background: rgba(217,119,87,0.04); padding: 14px 16px; margin-bottom: 16px;
+    /* Confirm: GREY + disabled until all required fields are filled, then it
+       flips to GREEN and becomes clickable (.ready). */
+    .inline-controls .ic-confirm {
+      background: var(--bg-surface-raised); color: var(--text-dim);
+      border: 1px solid var(--border-medium); cursor: default;
     }
-    .add-form h4 {
-      font-family: var(--font-ui); font-size: 10px; font-weight: 600;
-      letter-spacing: 0.10em; text-transform: uppercase; color: var(--accent-bright);
-      margin: 0 0 12px;
+    .inline-controls .ic-confirm.ready {
+      background: var(--color-grounded-dim); color: #0a0a0a; border-color: transparent; cursor: pointer;
     }
-    .add-grid { display: grid; grid-template-columns: 150px 1fr; gap: 8px 14px; align-items: center; }
-    .add-grid label { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); }
-    .add-grid label .req { color: var(--accent); }
-    .field-wrap { display: flex; align-items: center; gap: 6px; }
-    .field-wrap input[type=text], .field-wrap input[type=number], .field-wrap select, .field-wrap textarea {
+    .inline-controls .ic-confirm.ready:hover { filter: brightness(1.12); }
+    /* Cancel: RED style. */
+    .inline-controls .ic-cancel {
+      background: var(--color-danger-bg); color: var(--color-danger);
+      border: 1px solid var(--color-danger-dim);
+    }
+    .inline-controls .ic-cancel:hover { background: var(--color-danger-dim); color: #0a0a0a; }
+    .inline-controls .ic-err { color: var(--color-denied-dim); font-size: 11px; font-family: var(--font-mono); }
+
+    /* The inline editable row sits between the header and the first data row.
+       Fields only — the Confirm/Cancel live up in the header. Terracotta while
+       incomplete; turns GREEN once every required field has a value. */
+    .gtbl tr.add-inline-row > td {
+      background: rgba(217,119,87,0.07);
+      border-bottom: 1px solid var(--accent-border); padding: 6px 8px; vertical-align: middle;
+      white-space: normal; max-width: none; overflow: visible;
+      transition: background 150ms;
+    }
+    .gtbl tr.add-inline-row.complete > td {
+      background: rgba(52,211,153,0.10);
+      border-bottom-color: var(--color-grounded-dim);
+    }
+    /* Flex lives on an INNER wrapper, not the <td> — a flex <td> drops out of
+       table-cell layout and its bottom border stops aligning with siblings. */
+    .gtbl tr.add-inline-row > td:first-child .first-cell-inner {
+      display: flex; align-items: center; gap: 6px;
+    }
+    /* Leading ✨ "fill whole row" button. */
+    .row-ai-btn {
+      flex: 0 0 auto; width: 24px; height: 24px; border-radius: 5px;
+      background: var(--color-info-bg); color: var(--color-info-dim);
+      border: 1px solid var(--border-medium); cursor: pointer;
+      font-size: 13px; line-height: 1; display: grid; place-items: center;
+    }
+    .row-ai-btn:hover { background: var(--color-info-dim); color: var(--bg-base); }
+    .row-ai-btn.busy { opacity: 0.5; pointer-events: none; }
+    .field-wrap { display: flex; align-items: center; gap: 4px; flex: 1 1 auto; min-width: 0; }
+    /* All editor inputs are single-line — long content scrolls horizontally. */
+    .field-wrap input[type=text], .field-wrap input[type=number], .field-wrap select {
       flex: 1; min-width: 0; background: var(--bg-base); color: var(--text-high);
       border: 1px solid var(--border-medium); border-radius: 5px; padding: 5px 8px;
       font-family: var(--font-mono); font-size: 11px;
+      white-space: nowrap; text-overflow: ellipsis;
     }
-    .field-wrap textarea { resize: vertical; min-height: 34px; line-height: 1.4; }
-    .field-wrap select:focus, .field-wrap input:focus, .field-wrap textarea:focus {
+    .field-wrap select:focus, .field-wrap input:focus {
       outline: none; border-color: var(--accent-border);
     }
     .field-wrap.system input { color: var(--text-dim); font-style: italic; background: var(--bg-surface); }
-    .ai-btn {
-      flex: 0 0 auto; background: var(--color-info-bg); color: var(--color-info-dim);
-      border: 1px solid var(--border-medium); border-radius: 5px; padding: 5px 8px;
-      cursor: pointer; font-size: 11px; font-family: var(--font-mono);
-    }
-    .ai-btn:hover { background: var(--color-info-dim); color: var(--bg-base); }
-    .ai-btn.busy { opacity: 0.5; pointer-events: none; }
     .multi-chips { display: flex; flex-wrap: wrap; gap: 4px; }
     .multi-chips label {
       display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono);
@@ -139,19 +161,6 @@
     }
     .multi-chips label.on { background: var(--accent-bg); color: var(--accent-bright); border-color: var(--accent-border); }
     .multi-chips input { display: none; }
-    .add-foot { margin-top: 14px; display: flex; gap: 8px; align-items: center; }
-    .btn-confirm {
-      background: var(--color-grounded-dim); color: var(--bg-base); border: 0;
-      border-radius: 5px; padding: 6px 14px; cursor: pointer; font-weight: 600;
-      font-family: var(--font-ui); font-size: 11px;
-    }
-    .btn-cancel {
-      background: transparent; color: var(--text-muted); border: 1px solid var(--border-medium);
-      border-radius: 5px; padding: 6px 14px; cursor: pointer; font-family: var(--font-ui); font-size: 11px;
-    }
-    .btn-confirm:hover { filter: brightness(1.1); }
-    .btn-cancel:hover { color: var(--text-primary); }
-    .add-err { color: var(--color-denied-dim); font-size: 11px; margin-left: 8px; }
 
     /* Click-to-edit on existing cells */
     .gtbl tr:not(.nested-host) td.editable-cell { cursor: pointer; }
@@ -364,6 +373,12 @@
     <main class="main">
       <div class="main-header">
         <h1 id="root-title">Pick a table to start</h1>
+        <button id="add-inline-btn" class="add-inline-btn" style="display:none;" title="Insert a new record row">✎ New record</button>
+        <span id="inline-controls" class="inline-controls" style="display:none;">
+          <button class="ic-cancel" title="Discard">✕ Cancel</button>
+          <button class="ic-confirm" title="Confirm — add record">✓ Confirm</button>
+          <span class="ic-err"></span>
+        </span>
         <span class="hint" id="root-hint">Click any <b>+</b> next to a value to drill into its related rows.</span>
         <span class="live-pill" id="live-pill" title="WebSocket connection status">
           <span class="label" id="live-text">offline</span>
@@ -377,7 +392,6 @@
       </div>
     </main>
   </div>
-  <button id="fab-add" class="fab-add" title="Add record" aria-label="Add record">✎</button>
   <script src="/static/otel-popover.js"></script>
 </div>
 
@@ -936,8 +950,11 @@
     currentRoot = table;
     for (const li of tableList.children) li.classList.toggle('active', li.dataset.table === table);
     document.getElementById('root-title').textContent = table;
-    // Show the floating Add-record button only for editable root tables.
-    document.getElementById('fab-add').classList.toggle('show', isEditable(table));
+    // Show the "New record" button only for editable root tables; always
+    // reset the edit controls when switching tables.
+    document.getElementById('add-inline-btn').style.display = isEditable(table) ? '' : 'none';
+    document.getElementById('inline-controls').style.display = 'none';
+    _activeAddRow = null;
     const grid = document.getElementById('root-grid');
     grid.innerHTML = '<div class="loading">Loading…</div>';
     // Prefetch the edit spec for editable tables so cells can be made
@@ -1043,14 +1060,28 @@
   }
 
   // ─── Append: the "+ Add record" form (D-021) ─────────────────────────────
-  document.getElementById('fab-add').addEventListener('click', () => {
-    openAddForm(currentRoot);
-    // Scroll the form (top of grid) into view since the FAB is bottom-right.
-    document.querySelector('.grid-wrap')?.scrollTo({ top: 0, behavior: 'smooth' });
+  let _activeAddRow = null;
+  document.getElementById('add-inline-btn').addEventListener('click', () => openInlineAddRow(currentRoot));
+  document.querySelector('#inline-controls .ic-cancel').addEventListener('click', () => closeInlineAddRow());
+  document.querySelector('#inline-controls .ic-confirm').addEventListener('click', () => {
+    if (_activeAddRow) submitInlineRow(currentRoot, _activeAddRow);
   });
 
-  function fieldInput(table, col, meta, fkOptions) {
-    // Returns {el, get} — the input element and a getter for its value.
+  function showAddControls(on) {
+    document.getElementById('add-inline-btn').style.display = on ? 'none' : '';
+    document.getElementById('inline-controls').style.display = on ? 'inline-flex' : 'none';
+    if (!on) document.querySelector('#inline-controls .ic-err').textContent = '';
+  }
+
+  function closeInlineAddRow() {
+    if (_activeAddRow) { _activeAddRow.remove(); _activeAddRow = null; }
+    showAddControls(false);
+  }
+
+  function fieldInput(table, col, meta, fkOptions, onChange) {
+    // Returns {wrap, get, skip}. `onChange` (optional) is fired on every user
+    // edit so add-row validity can be recomputed live (covers deletion too).
+    const fire = () => { if (onChange) onChange(); };
     const wrap = document.createElement('div');
     wrap.className = 'field-wrap';
     if (meta.kind === 'system') {
@@ -1067,22 +1098,25 @@
     if (meta.kind === 'bool') {
       const sel = document.createElement('select');
       sel.innerHTML = '<option value="true">true</option><option value="false">false</option>';
+      sel.addEventListener('change', fire);
       wrap.appendChild(sel);
-      return { wrap, get: () => sel.value === 'true' };
+      return { wrap, get: () => sel.value === 'true', set: (v) => { sel.value = (v === true || v === 'true') ? 'true' : 'false'; } };
     }
     if (meta.kind === 'enum') {
       const sel = document.createElement('select');
       if (!meta.required) sel.innerHTML = '<option value=""></option>';
       for (const o of meta.options) sel.innerHTML += `<option value="${escapeAttr(o)}">${escapeHtml(o)}</option>`;
+      sel.addEventListener('change', fire);
       wrap.appendChild(sel);
-      return { wrap, get: () => sel.value };
+      return { wrap, get: () => sel.value, set: (v) => { if (v != null) sel.value = String(v); } };
     }
     if (meta.kind === 'fk') {
       const sel = document.createElement('select');
       sel.innerHTML = '<option value="">— select —</option>';
       for (const o of (fkOptions[col] || [])) sel.innerHTML += `<option value="${escapeAttr(o.value)}">${escapeHtml(o.label)}</option>`;
+      sel.addEventListener('change', fire);
       wrap.appendChild(sel);
-      return { wrap, get: () => sel.value };
+      return { wrap, get: () => sel.value, set: (v) => { if (v != null) sel.value = String(v); } };
     }
     if (meta.kind === 'text[]') {
       const box = document.createElement('div');
@@ -1090,103 +1124,162 @@
       for (const o of meta.options) {
         const lab = document.createElement('label');
         lab.innerHTML = `<input type="checkbox" value="${escapeAttr(o)}">${escapeHtml(o)}`;
-        lab.querySelector('input').addEventListener('change', e => lab.classList.toggle('on', e.target.checked));
+        lab.querySelector('input').addEventListener('change', e => { lab.classList.toggle('on', e.target.checked); fire(); });
         box.appendChild(lab);
       }
       wrap.appendChild(box);
-      return { wrap, get: () => Array.from(box.querySelectorAll('input:checked')).map(i => i.value) };
-    }
-    // text / json → textarea (json) or input (text), with optional AI button.
-    const isLong = meta.kind === 'json' || ['description','update_text','rationale_template','notes','conditions'].includes(col);
-    const inp = document.createElement(isLong ? 'textarea' : 'input');
-    if (!isLong) inp.type = 'text';
-    if (meta.placeholder) inp.placeholder = meta.placeholder;
-    wrap.appendChild(inp);
-    if (meta.ai) {
-      const ai = document.createElement('button');
-      ai.type = 'button'; ai.className = 'ai-btn'; ai.textContent = '✨ AI'; ai.title = 'Suggest a value';
-      ai.addEventListener('click', async () => {
-        ai.classList.add('busy'); ai.textContent = '…';
-        try {
-          const ctx = collectContext();
-          const r = await fetch('/db-explorer/ai-suggest', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ table, column: col, context: ctx }),
+      return {
+        wrap,
+        get: () => Array.from(box.querySelectorAll('input:checked')).map(i => i.value),
+        set: (vals) => {
+          const want = new Set(Array.isArray(vals) ? vals.map(String) : []);
+          box.querySelectorAll('label').forEach(lab => {
+            const cb = lab.querySelector('input');
+            cb.checked = want.has(cb.value);
+            lab.classList.toggle('on', cb.checked);
           });
-          const d = await r.json();
-          if (d.suggestion) inp.value = d.suggestion;
-        } catch (_) {}
-        ai.classList.remove('busy'); ai.textContent = '✨ AI';
-      });
-      wrap.appendChild(ai);
+        },
+      };
     }
-    return { wrap, get: () => inp.value };
+    // All free-text and JSON fields are single-line inputs — visually one
+    // line, long content scrolls horizontally within the field. (Per-field
+    // AI buttons were removed; the row-level ✨ fills everything at once.)
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    if (meta.placeholder) inp.placeholder = meta.placeholder;
+    inp.addEventListener('input', fire);
+    wrap.appendChild(inp);
+    return { wrap, get: () => inp.value, set: (v) => { if (v != null) inp.value = String(v); } };
   }
 
   let _formGetters = {};
-  function collectContext() {
-    // Snapshot current field values so AI suggestions are context-aware.
-    const ctx = {};
-    for (const [c, g] of Object.entries(_formGetters)) {
-      try { const v = g(); if (v) ctx[c] = v; } catch (_) {}
+  let _formSetters = {};
+
+  // ✨ Generate ONE consistent sample record and populate every field. The
+  // user can then tweak or cancel — nothing is saved until Confirm.
+  async function aiFillWholeRow(table, btn) {
+    btn.classList.add('busy'); const orig = btn.textContent; btn.textContent = '…';
+    try {
+      const resp = await fetch('/db-explorer/ai-generate-row', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ table }),
+      });
+      const d = await resp.json();
+      if (!resp.ok) throw new Error(d.detail || `HTTP ${resp.status}`);
+      for (const [col, v] of Object.entries(d.values || {})) {
+        const setter = _formSetters[col];
+        if (setter) setter(v);
+      }
+      refreshAddValidity();
+    } catch (err) {
+      const e = document.querySelector('#inline-controls .ic-err');
+      if (e) e.textContent = 'AI fill failed: ' + String(err.message).slice(0, 60);
     }
-    return ctx;
+    btn.classList.remove('busy'); btn.textContent = orig;
   }
 
-  async function openAddForm(table) {
-    if (!table || !isEditable(table)) return;
-    const grid = document.getElementById('root-grid');
-    let existing = document.getElementById('add-form');
-    if (existing) existing.remove();
 
-    const form = document.createElement('div');
-    form.className = 'add-form'; form.id = 'add-form';
-    form.innerHTML = `<h4>New ${escapeHtml(table)} record</h4><div class="loading">Loading form…</div>`;
-    grid.insertBefore(form, grid.firstChild);
+  // ─── Inline "New record" row (D-021) ─────────────────────────────────────
+  // Inserts an editable row between the header and the first data row of the
+  // root table. Each cell holds the type-appropriate control (dropdown / FK /
+  // multi-select / text+AI); a second full-width controls row carries
+  // Confirm / Cancel. On success the realtime WS INSERT event flashes the
+  // real row in, so we just remove the editor.
+  function openInlineAddRow(table) {
+    if (!table || !isEditable(table) || !rootEditMeta) return;
+    const tbl = document.querySelector('#root-grid .gtbl');
+    if (!tbl) return;
+    let tbody = tbl.querySelector('tbody');
+    if (!tbody) { tbody = document.createElement('tbody'); tbl.appendChild(tbody); }
 
-    let meta;
-    try {
-      const resp = await fetch(`/db-explorer/edit-meta/${encodeURIComponent(table)}`);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      meta = await resp.json();
-    } catch (err) {
-      form.innerHTML = `<div class="err">Could not load form: ${escapeHtml(err.message)}</div>`;
+    // Already open? focus it instead of stacking another.
+    if (tbody.querySelector('.add-inline-row')) {
+      tbody.querySelector('.add-inline-row input, .add-inline-row select, .add-inline-row textarea')?.focus();
       return;
     }
 
+    const meta = rootEditMeta;
+    const columns = meta.columns;
     _formGetters = {};
-    const gridEl = document.createElement('div');
-    gridEl.className = 'add-grid';
-    for (const col of meta.columns) {
+    _formSetters = {};
+
+    // Fields-only row — one cell per column, aligned with the header. The
+    // Confirm/Cancel controls live up in the header (the morphed button).
+    const inputRow = document.createElement('tr');
+    inputRow.className = 'add-inline-row';
+    let first = true;
+    for (const col of columns) {
+      const td = document.createElement('td');
       const m = meta.spec[col];
-      if (!m) continue;  // not in edit spec → skip
-      const label = document.createElement('label');
-      label.innerHTML = `${escapeHtml(col)}${m.required && m.kind !== 'system' ? ' <span class="req">*</span>' : ''}`;
-      const fi = fieldInput(table, col, m, meta.fk_options || {});
-      if (!fi.skip) _formGetters[col] = fi.get;
-      gridEl.appendChild(label);
-      gridEl.appendChild(fi.wrap);
+      const fi = m ? fieldInput(table, col, m, meta.fk_options || {}, refreshAddValidity) : null;
+      if (fi && !fi.skip) { _formGetters[col] = fi.get; _formSetters[col] = fi.set; }
+
+      if (first) {
+        first = false;
+        // First cell: ✨ "fill whole row" button + the field, inside a flex
+        // wrapper (NOT on the td, which must stay a real table cell so its
+        // border aligns with the rest of the row).
+        const inner = document.createElement('div');
+        inner.className = 'first-cell-inner';
+        const rowAi = document.createElement('button');
+        rowAi.type = 'button'; rowAi.className = 'row-ai-btn'; rowAi.textContent = '✨';
+        rowAi.title = 'AI — generate a complete, consistent sample record';
+        rowAi.addEventListener('click', () => aiFillWholeRow(table, rowAi));
+        inner.appendChild(rowAi);
+        inner.appendChild(fi ? fi.wrap : Object.assign(document.createElement('span'), { className: 'null', textContent: '—' }));
+        td.appendChild(inner);
+      } else if (fi) {
+        td.appendChild(fi.wrap);
+      } else {
+        td.innerHTML = '<span class="null">—</span>';
+      }
+      inputRow.appendChild(td);
     }
-    form.innerHTML = `<h4>New ${escapeHtml(table)} record</h4>`;
-    form.appendChild(gridEl);
-    const foot = document.createElement('div');
-    foot.className = 'add-foot';
-    foot.innerHTML = `<button class="btn-confirm">Confirm — add record</button><button class="btn-cancel">Cancel</button><span class="add-err"></span>`;
-    form.appendChild(foot);
-    foot.querySelector('.btn-cancel').addEventListener('click', () => form.remove());
-    foot.querySelector('.btn-confirm').addEventListener('click', () => submitAddForm(table, form));
+    tbody.insertBefore(inputRow, tbody.firstChild);
+    _activeAddRow = inputRow;
+
+    // Morph the "New record" button into Confirm / Cancel.
+    showAddControls(true);
+    // Re-validate completeness on every keystroke / selection so Confirm and
+    // the row colour track readiness in real time.
+    inputRow.addEventListener('input', refreshAddValidity);
+    inputRow.addEventListener('change', refreshAddValidity);
+    refreshAddValidity();
+    // Focus the first real input/select for fast keyboard entry.
+    inputRow.querySelector('input:not([disabled]), select, textarea')?.focus();
   }
 
-  async function submitAddForm(table, form) {
-    const errEl = form.querySelector('.add-err');
+  function addRowComplete() {
+    // All required, non-system fields must have a value.
+    if (!rootEditMeta) return false;
+    for (const [col, m] of Object.entries(rootEditMeta.spec)) {
+      if (m.kind === 'system' || !m.required) continue;
+      const g = _formGetters[col];
+      if (!g) return false;
+      const v = g();
+      if (v === undefined || v === '' || (Array.isArray(v) && v.length === 0)) return false;
+    }
+    return true;
+  }
+
+  function refreshAddValidity() {
+    const ready = addRowComplete();
+    const okBtn = document.querySelector('#inline-controls .ic-confirm');
+    okBtn.classList.toggle('ready', ready);
+    okBtn.disabled = !ready;
+    if (_activeAddRow) _activeAddRow.classList.toggle('complete', ready);
+  }
+
+  async function submitInlineRow(table, inputRow) {
+    const okBtn = document.querySelector('#inline-controls .ic-confirm');
+    const errEl = document.querySelector('#inline-controls .ic-err');
     errEl.textContent = '';
     const values = {};
     for (const [c, g] of Object.entries(_formGetters)) {
       const v = g();
       if (v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0)) values[c] = v;
     }
-    const btn = form.querySelector('.btn-confirm');
-    btn.disabled = true; btn.textContent = 'Adding…';
+    okBtn.disabled = true; okBtn.textContent = 'Adding…';
     try {
       const resp = await fetch(`/db-explorer/row/${encodeURIComponent(table)}`, {
         method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -1194,12 +1287,13 @@
       });
       const d = await resp.json();
       if (!resp.ok) throw new Error(d.detail || `HTTP ${resp.status}`);
-      // Success — remove the form. The realtime WS INSERT event will flash
-      // the new row into the table on its own, so we don't insert it here.
-      form.remove();
+      // Success — the realtime WS INSERT event flashes the real row in.
+      okBtn.textContent = '✓ Confirm';
+      closeInlineAddRow();
     } catch (err) {
-      errEl.textContent = String(err.message);
-      btn.disabled = false; btn.textContent = 'Confirm — add record';
+      okBtn.textContent = '✓ Confirm';
+      refreshAddValidity();   // restore ready/disabled from current field state
+      errEl.textContent = String(err.message).slice(0, 80);
     }
   }
 </script>
