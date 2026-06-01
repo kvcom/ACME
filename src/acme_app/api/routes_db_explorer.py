@@ -49,6 +49,12 @@ from acme_app.application.realtime import broadcaster as realtime_broadcaster
 from acme_app.auth.current_user import CurrentUser, _decode_session, get_current_user
 from acme_app.auth.role_store import get_roles_for_username
 from acme_app.config import settings
+from acme_app.infrastructure.llm.availability import (
+    NO_MODEL_MESSAGE,
+    assist_specs_ordered,
+)
+from acme_app.infrastructure.llm.model_registry import ModelSpec
+from acme_app.infrastructure.llm.provider import get_provider
 from acme_app.infrastructure.db.session import AsyncSessionLocal, get_db_session
 
 router = APIRouter(prefix='/db-explorer', tags=['db-explorer'])
@@ -564,21 +570,64 @@ class AiSuggestInput(BaseModel):
     context: dict[str, Any] = {}
 
 
+def _all_failed_detail(spec: ModelSpec | None, exc: Exception | None) -> str:
+    """User-facing message when every available model was tried and all failed
+    (bad keys, no credit, server down)."""
+    last = f' Last attempt: {spec.label} ({type(exc).__name__}).' if spec and exc else ''
+    return (
+        'Could not reach any configured language model.' + last +
+        ' Check the API keys are valid and the accounts have credit, then try again.'
+    )
+
+
+async def _assist_with_fallback(call):
+    """Run an assist call against available models in order — local first, then
+    cheapest cloud (assist_specs_ordered) — falling through to the next model
+    on failure. Returns (ModelSpec, result). Raises 503 when nothing is
+    configured or every available model failed."""
+    specs = await assist_specs_ordered()
+    if not specs:
+        raise HTTPException(status_code=503, detail=NO_MODEL_MESSAGE)
+    last_exc: Exception | None = None
+    last_spec: ModelSpec | None = None
+    for spec in specs:
+        try:
+            return spec, await call(spec)
+        except Exception as exc:  # noqa: BLE001 — any failure → try the next model
+            last_exc, last_spec = exc, spec
+            _log.warning('assist: model %s failed (%s); trying next', spec.key, type(exc).__name__)
+    raise HTTPException(status_code=503, detail=_all_failed_detail(last_spec, last_exc))
+
+
+_FIELD_STUBS = {
+    'name': 'Globex Corporation',
+    'title': 'Intermittent API authentication failures',
+    'description': 'Customer reports sporadic 401 responses during peak hours; '
+                   'token refresh appears to fail intermittently.',
+    'label': 'New Action',
+    'display_name': 'New User',
+    'email': 'new.user@example.local',
+}
+
+
 @router.post('/ai-suggest')
 async def ai_suggest(
     payload: AiSuggestInput,
     user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Generate a short, context-aware sample value for a free-text field
-    using the local Ollama model (D-021). Falls back to a templated stub if
-    the local model is unavailable."""
+    using whichever model is configured (D-021). Uses a reachable local model
+    if present, otherwise the cheapest available cloud model. Returns a clear
+    503 when no model is configured at all."""
     _require_admin(user)
     _require_editable(payload.table)
-    suggestion = await _ai_field_suggestion(payload.table, payload.column, payload.context)
-    return {'suggestion': suggestion}
+    spec, suggestion = await _assist_with_fallback(
+        lambda s: _ai_field_suggestion(s, payload.table, payload.column, payload.context)
+    )
+    return {'suggestion': suggestion, 'model': spec.key}
 
 
-async def _ai_field_suggestion(table: str, column: str, context: dict[str, Any]) -> str:
+async def _ai_field_suggestion(model_spec: ModelSpec, table: str, column: str, context: dict[str, Any]) -> str:
     ctx_str = ', '.join(f'{k}={v}' for k, v in context.items() if v) or 'no other fields yet'
     system = (
         'You generate a single short, realistic sample value for one database '
@@ -590,28 +639,13 @@ async def _ai_field_suggestion(table: str, column: str, context: dict[str, Any])
         f'Other fields in this row: {ctx_str}\n\n'
         f'Write a realistic value for "{column}".'
     )
-    try:
-        from acme_app.infrastructure.llm.model_registry import MODEL_REGISTRY
-        from acme_app.infrastructure.llm.providers.ollama_provider import OllamaProvider
-        spec = MODEL_REGISTRY.get('ollama-llama')
-        if spec and settings.ollama_base_url:
-            provider = OllamaProvider(model=spec.model)
-            resp = await asyncio.wait_for(provider.narrate(system, user_prompt, {}), timeout=20.0)
-            text_out = (resp.text or '').strip().strip('"').splitlines()[0][:300]
-            if text_out:
-                return text_out
-    except Exception as exc:
-        _log.warning('ai-suggest local model failed (%s)', type(exc).__name__)
-    # Fallback stub so the button always does something.
-    return {
-        'name': 'Globex Corporation',
-        'title': 'Intermittent API authentication failures',
-        'description': 'Customer reports sporadic 401 responses during peak hours; '
-                       'token refresh appears to fail intermittently.',
-        'label': 'New Action',
-        'display_name': 'New User',
-        'email': 'new.user@example.local',
-    }.get(column, f'Sample {column}')
+    provider = get_provider(model_spec.key)
+    resp = await asyncio.wait_for(provider.narrate(system, user_prompt, {}), timeout=30.0)
+    text_out = (resp.text or '').strip().strip('"').splitlines()
+    text_out = text_out[0][:300] if text_out else ''
+    # Model reached but returned nothing usable — fall back to a templated value
+    # so the button still does something (this is not a "no model" condition).
+    return text_out or _FIELD_STUBS.get(column, f'Sample {column}')
 
 
 class AiGenRowInput(BaseModel):
@@ -632,11 +666,13 @@ async def ai_generate_row(
     _require_admin(user)
     _require_editable(payload.table)
     await resolve_columns()
-    values = await _ai_generate_record(session, payload.table)
-    return {'table': payload.table, 'values': values}
+    spec, values = await _assist_with_fallback(
+        lambda s: _ai_generate_record(session, payload.table, s)
+    )
+    return {'table': payload.table, 'values': values, 'model': spec.key}
 
 
-async def _ai_generate_record(session: AsyncSession, table: str) -> dict[str, Any]:
+async def _ai_generate_record(session: AsyncSession, table: str, model_spec: ModelSpec) -> dict[str, Any]:
     from acme_app.application.db_explorer import EDIT_SPEC
     spec = EDIT_SPEC[table]
 
@@ -684,17 +720,13 @@ async def _ai_generate_record(session: AsyncSession, table: str) -> dict[str, An
         '\n\nReturn a single JSON object with one key per field above.'
     )
 
-    raw: dict[str, Any] = {}
-    try:
-        from acme_app.infrastructure.llm.model_registry import MODEL_REGISTRY
-        from acme_app.infrastructure.llm.providers.ollama_provider import OllamaProvider
-        mspec = MODEL_REGISTRY.get('ollama-llama')
-        if mspec and settings.ollama_base_url:
-            provider = OllamaProvider(model=mspec.model)
-            resp = await asyncio.wait_for(provider.narrate(system, user_prompt, {}), timeout=40.0)
-            raw = _parse_json_blob(resp.text) or {}
-    except Exception as exc:
-        _log.warning('ai-generate-row local model failed (%s)', type(exc).__name__)
+    # The provider call is allowed to raise — the endpoint turns that into a
+    # clear 503 (bad key / no credit / server down). Only a successful call
+    # that returns imperfect JSON degrades quietly: raw stays {} and the
+    # per-field coercion below fills valid fallback values.
+    provider = get_provider(model_spec.key)
+    resp = await asyncio.wait_for(provider.narrate(system, user_prompt, {}), timeout=40.0)
+    raw: dict[str, Any] = _parse_json_blob(resp.text) or {}
 
     # Validate / coerce every field to a storable, valid value. Anything the
     # model got wrong or omitted is filled with a sensible valid fallback so

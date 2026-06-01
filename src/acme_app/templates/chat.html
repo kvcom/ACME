@@ -212,6 +212,20 @@
     .provider-opt:hover { background: var(--bg-surface-raised); color: var(--text-primary); }
     .provider-opt.active { color: var(--accent-dim); }
     .provider-opt small { color: var(--text-dim); font-size: 9px; }
+    /* "No model configured" pill state: muted text + caution dot. */
+    .provider-pill.no-model { color: var(--text-dim); }
+    .provider-pill.no-model .dot { background: var(--color-caution-dim); }
+    /* Models with no working credentials: dimmed, not selectable. */
+    .provider-opt.unavailable { opacity: 0.4; cursor: not-allowed; }
+    .provider-opt.unavailable:hover { background: transparent; color: var(--text-secondary); }
+    .provider-opt.unavailable small { color: var(--color-caution-dim); }
+    .provider-nomodel {
+      padding: 9px 11px; margin: 2px; border-radius: var(--radius-sm);
+      background: rgba(251,113,133,0.10); border: 1px solid rgba(251,113,133,0.30);
+      color: var(--text-secondary); font-size: 10px; line-height: 1.45;
+      max-width: 280px;
+    }
+    .provider-nomodel code { color: var(--accent-bright); font-family: var(--font-mono); }
 
     .role-tag-sales   { color: var(--color-info-dim); }
     .role-tag-support { color: var(--accent-dim); }
@@ -418,21 +432,31 @@
 
       <div class="composer">
         <div class="composer-inner">
-          <button type="button" class="provider-pill" id="provider-pill" aria-haspopup="true">
+          <button type="button" class="provider-pill {% if not has_any_model %}no-model{% endif %}" id="provider-pill" aria-haspopup="true">
             <span class="dot"></span>
-            <span id="provider-name">{{ model_registry[default_model_key].label }}</span>
+            <span id="provider-name">{% if has_any_model %}{{ model_registry[default_model_key].label }}{% else %}No model configured{% endif %}</span>
             <span class="dimmer">▾</span>
           </button>
           <input id="query" type="text" placeholder="Ask about a customer, issue, or next action…" autofocus/>
           <button class="btn btn-sm btn-primary" id="send">Send</button>
         </div>
         <div class="provider-pop" id="provider-pop">
+          {% if not has_any_model %}
+          <div class="provider-nomodel" id="provider-nomodel">
+            No model is configured. Add a key to <code>.env</code>
+            (<code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code> or
+            <code>GOOGLE_API_KEY</code>) and restart, or start a local Ollama
+            server. Models become selectable once a credential works.
+          </div>
+          {% endif %}
           {% for key, spec in model_registry.items() %}
-          <div class="provider-opt {% if key == default_model_key %}active{% endif %}"
+          {% set is_avail = model_availability.get(key, False) %}
+          <div class="provider-opt {% if key == default_model_key and is_avail %}active{% endif %} {% if not is_avail %}unavailable{% endif %}"
                data-model-key="{{ key }}"
-               data-label="{{ spec.label }}">
+               data-label="{{ spec.label }}"
+               data-available="{{ 'true' if is_avail else 'false' }}">
             <span>{{ spec.label }}</span>
-            <small>{{ spec.badge }}</small>
+            <small>{% if is_avail %}{{ spec.badge }}{% else %}needs key{% endif %}</small>
           </div>
           {% endfor %}
         </div>

@@ -365,3 +365,11 @@ Before submission I ran a self-audit of the prototype against the brief and comm
 **Why**: The prior debug exporter proved instrumentation but discarded data. Jaeger makes the stored `otel_trace_id` actionable for engineers. The extra metrics-dashboard layer was intentionally removed from the prototype after Trivy hardening because it added operational surface and vulnerabilities without strengthening the traceability story; cost, token and latency data already live in the Decision Ledger and custom trace viewer.
 
 **Boundary**: OTel remains fail-soft and non-authoritative. If the collector or backend is down, compliance/audit views still read from PostgreSQL (`agent_traces`, `trace_events`, `tool_call_logs`, `rbac_decisions`). Usernames, trace refs and raw user text stay out of the OTel telemetry path.
+
+## D-024 · Runtime model availability — provider-agnostic assist, no bundled model
+
+**Choice**: The app resolves which models are usable at runtime (cloud key present, or a local Ollama server actually reachable) via a single helper (`infrastructure/llm/availability.py`). The DB Explorer AI assist uses *whichever* model is available — preferring a free local one — instead of assuming a local Ollama is running, and the composer's model dropdown greys out models with no working credential and shows an "add a key to `.env`" banner when nothing is configured.
+
+**Why**: A reviewer running `docker compose up` has no API keys and no host Ollama. The previous behaviour hard-coded the local model for the DB Explorer assist and offered every model in the dropdown regardless of credentials, so both looked broken out of the box. Deliberately **not** bundling a model in Compose keeps the image small and the first boot fast; the trade-off is that the agent's answers need the reviewer to supply one credential (documented in the README "How to run"). When none is configured, chat degrades to an `LLM Unavailable` trace (eval case 13) and the assist returns a clear "configure a model / check your key or balance" message rather than failing silently. The deterministic regex floors for adversarial detection and PII redaction keep working with no model at all.
+
+**Production**: Per-tenant model policy and budget routing; optionally bundle a small local model as a zero-config default for evaluation environments.

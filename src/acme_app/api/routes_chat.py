@@ -25,6 +25,7 @@ from acme_app.auth.current_user import CurrentUser, get_current_user
 from acme_app.config import settings
 from acme_app.infrastructure.db import repositories as repo
 from acme_app.infrastructure.db.session import get_db_session
+from acme_app.infrastructure.llm.availability import NO_MODEL_MESSAGE, model_availability
 from acme_app.infrastructure.llm.model_registry import MODEL_REGISTRY, default_key as registry_default_key, visible_registry
 from acme_app.policy.action_guard import mint_confirmation_token
 
@@ -101,10 +102,19 @@ async def chat_page(
         pending_action = None
 
     visible = visible_registry()
-    # Pick a sensible default for the UI: prefer the configured one if visible,
-    # otherwise the first visible model. Stub stays as the silent fallback in
-    # the backend but never shows as a peer choice in the dropdown.
-    if settings.llm_provider in visible:
+    # Which visible models are usable right now (key set / local reachable).
+    availability = await model_availability()
+    available_keys = [k for k in visible if availability.get(k)]
+    has_any_model = bool(available_keys)
+    # Pick a sensible default for the UI: prefer the configured model, but only
+    # if it is actually available; otherwise the first available model; falling
+    # back to the registry default purely so the label renders when nothing is
+    # configured (the dropdown then shows the "add a key" banner).
+    if settings.llm_provider in available_keys:
+        default_key = settings.llm_provider
+    elif available_keys:
+        default_key = available_keys[0]
+    elif settings.llm_provider in visible:
         default_key = settings.llm_provider
     else:
         default_key = registry_default_key() if registry_default_key() in visible else next(iter(visible))
@@ -117,6 +127,9 @@ async def chat_page(
             'default_model_key': default_key,
             'conversation_ref': active_ref,
             'model_registry': visible,
+            'model_availability': availability,
+            'has_any_model': has_any_model,
+            'no_model_message': NO_MODEL_MESSAGE,
             'conversation_groups': groups,
             'history': history,
             'pending_action': pending_action,

@@ -207,7 +207,7 @@ The safety boundary is unchanged: the agent never invents an action, every recom
 ## 12. Admin surfaces
 
 - **Decision Trace Viewer** (`/traces`) — read-only Evidence-to-Action graph for every turn (covered above).
-- **Admin DB Explorer** (`/db-explorer`, admin only) — pivot drill-down across FK/reverse-FK relationships with columns introspected live from the schema; realtime updates pushed over WebSocket from Postgres triggers; and validated edit/append for a curated set of tables (audit tables stay read-only). All writes are `INSERT`/`UPDATE` only, preserving the append-only invariant. A row-level AI assist can draft one consistent sample record using the local model.
+- **Admin DB Explorer** (`/db-explorer`, admin only) — pivot drill-down across FK/reverse-FK relationships with columns introspected live from the schema; realtime updates pushed over WebSocket from Postgres triggers; and validated edit/append for a curated set of tables (audit tables stay read-only). All writes are `INSERT`/`UPDATE` only, preserving the append-only invariant. A row-level AI assist can draft one consistent sample record using whichever model is configured (preferring a free local model when one is reachable; it reports clearly when no model is available).
 
 ## 13. Append-only data model
 

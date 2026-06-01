@@ -20,17 +20,30 @@
   const STORAGE_KEY = 'acme_model_key';
   const PREVIOUS_DEFAULT_MODEL_KEYS = new Set(['gpt-5.4-mini']);
   const serverDefaultModelKey = document.body.dataset.modelKey || 'claude-opus-4-8';
+  const optFor = (key) => document.querySelector(`.provider-opt[data-model-key="${CSS.escape(key)}"]`);
+  const isKeyAvailable = (key) => { const o = optFor(key); return !!o && o.dataset.available !== 'false'; };
+  const firstAvailableKey = () => document.querySelector('.provider-opt[data-available="true"]')?.dataset.modelKey || null;
+
   let currentModelKey = (() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       return PREVIOUS_DEFAULT_MODEL_KEYS.has(stored) ? null : stored;
     } catch { return null; }
   })() || serverDefaultModelKey;
-  if (!document.querySelector(`.provider-opt[data-model-key="${CSS.escape(currentModelKey)}"]`)) {
-    currentModelKey = serverDefaultModelKey || document.querySelector('.provider-opt')?.dataset.modelKey || 'claude-opus-4-8';
-    try { localStorage.setItem(STORAGE_KEY, currentModelKey); } catch {}
+  const firstOptionKey = () => document.querySelector('.provider-opt')?.dataset.modelKey || 'claude-opus-4-8';
+  const savedPref = currentModelKey;
+  if (!optFor(currentModelKey)) {
+    currentModelKey = serverDefaultModelKey || firstOptionKey();
   }
-  try { setProvider(currentModelKey); } catch (e) { console.warn('[acme] setProvider failed', e); }
+  // Show a usable model: prefer the first available one (top of the list); if
+  // none are available, show the topmost listed model rather than a stale
+  // remembered pick (e.g. an unavailable GPT-5.5). Persist only when the
+  // resolved model is the user's actual saved preference, so adding a key
+  // later restores their choice.
+  if (!isKeyAvailable(currentModelKey)) {
+    currentModelKey = firstAvailableKey() || firstOptionKey();
+  }
+  try { setProvider(currentModelKey, currentModelKey === savedPref); } catch (e) { console.warn('[acme] setProvider failed', e); }
 
   function escape(s) {
     return String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -93,14 +106,19 @@
     return `badge badge-${suffix}`;
   }
 
-  function setProvider(key) {
+  function setProvider(key, persist = true) {
     currentModelKey = key;
     const opt = document.querySelector(`.provider-opt[data-model-key="${CSS.escape(key)}"]`);
     const label = opt ? (opt.dataset.label || key) : key;
-    if (providerNameEl) providerNameEl.textContent = label;
-    try { localStorage.setItem(STORAGE_KEY, key); } catch {}
+    // If the resolved model has no working credential (i.e. nothing is
+    // configured), say so plainly instead of naming an unusable model.
+    const usable = opt ? opt.dataset.available !== 'false' : false;
+    if (providerNameEl) providerNameEl.textContent = usable ? label : 'No model configured';
+    if (providerPill) providerPill.classList.toggle('no-model', !usable);
+    if (persist) { try { localStorage.setItem(STORAGE_KEY, key); } catch {} }
     document.querySelectorAll('.provider-opt').forEach(el => {
-      el.classList.toggle('active', el.dataset.modelKey === key);
+      // Only highlight an active model when it is actually usable.
+      el.classList.toggle('active', usable && el.dataset.modelKey === key);
     });
   }
 
@@ -113,6 +131,9 @@
     document.querySelectorAll('.provider-opt').forEach(opt => {
       opt.addEventListener('click', e => {
         e.stopPropagation();
+        // Models without a working credential are not selectable; keep the
+        // popover open so the "needs key" hint / banner stays visible.
+        if (opt.dataset.available === 'false') return;
         setProvider(opt.dataset.modelKey);
         providerPop.classList.remove('open');
       });

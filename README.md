@@ -114,6 +114,24 @@ docker compose logs app --tail=50       # app logs
 docker compose down -v                  # tear down and wipe data
 ```
 
+### Language models / API keys
+
+The stack starts fully without any model — login, the database, the DB Explorer, traces, evaluation pages, and the regex-based adversarial/PII safeguards all work. But to make **the agent actually answer** (and to use the DB Explorer's AI assist), give it at least one model. Pick whichever is easiest:
+
+- **A cloud key** — add one line to `.env` and restart:
+  ```bash
+  ANTHROPIC_API_KEY=sk-...      # or OPENAI_API_KEY=... / GOOGLE_API_KEY=...
+  docker compose restart app
+  ```
+- **A local model** — run [Ollama](https://ollama.com) on the host (`ollama pull qwen3.5:9b`); the app reaches it at `host.docker.internal:11434`, no key and no cost.
+
+The app discovers what's usable at runtime:
+
+- The composer's **model dropdown** greys out models with no working credential and shows an "add a key to `.env`" banner when nothing is configured — it never offers a model it can't call.
+- The **DB Explorer AI assist** uses whichever model is available (preferring a free local one), and returns a clear "no model configured / check your key or balance" message rather than failing silently.
+
+If no model is configured at all, chat turns are recorded as `LLM Unavailable` traces by design (see eval case 13) — nothing crashes.
+
 ## Demo users
 
 These are local demonstration identities for the technical assessment, not production credentials. The login route tries Keycloak first; the hard-coded fallback exists only so the demo still works if the local Keycloak container is unavailable.

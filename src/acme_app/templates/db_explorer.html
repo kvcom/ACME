@@ -1173,7 +1173,9 @@
       refreshAddValidity();
     } catch (err) {
       const e = document.querySelector('#inline-controls .ic-err');
-      if (e) e.textContent = 'AI fill failed: ' + String(err.message).slice(0, 60);
+      // Show the full backend detail (e.g. "No language model is configured…")
+      // rather than a truncated stub, so the fix is actionable.
+      if (e) e.textContent = String(err.message).slice(0, 240);
     }
     btn.classList.remove('busy'); btn.textContent = orig;
   }
