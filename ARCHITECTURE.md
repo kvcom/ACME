@@ -13,8 +13,6 @@ flowchart LR
     MCP --> Postgres
     App --> OTel[OpenTelemetry Collector]
     OTel --> Jaeger[Jaeger]
-    OTel --> Prom[Prometheus]
-    Prom --> Grafana[Grafana]
     App --> LLM[(LLM Provider<br/>Anthropic / OpenAI / Google / Ollama)]
     Postgres -. LISTEN/NOTIFY .-> App
 ```
@@ -25,15 +23,13 @@ Authentication is Keycloak's job; **authorization (which roles a user has) is Po
 
 | Container | Image | Port | Responsibility |
 |---|---|---|---|
-| app | Python 3.12 | 8000 | FastAPI, UI, agent orchestration, propose-confirm |
-| mcp-server | Python 3.12 | 8001 | Custom MCP exposing 8 business tools |
-| postgres | postgres:16 | 5432 | Business truth, traces, eval results |
-| redis | redis:7 | 6379 | Conversation memory, pending actions, caches |
-| keycloak | keycloak:24 | 8080 | Realm, users, RBAC tokens |
-| otel-collector | otel-contrib | 4318, 4317, 8889 | Receives OTLP traces, metrics and logs; exports traces to Jaeger and metrics for Prometheus scraping |
-| jaeger | jaegertracing/all-in-one | 16686 | Local trace backend and UI |
-| prometheus | prom/prometheus | 9090 | Scrapes OTel collector metrics |
-| grafana | grafana/grafana | 3000 | Metrics dashboards; Prometheus datasource is provisioned |
+| app | Python 3.13 Alpine | 8000 | FastAPI, UI, agent orchestration, propose-confirm |
+| mcp-server | Python 3.13 Alpine | 8001 | Custom MCP exposing 8 business tools |
+| postgres | custom image from postgres:16.13-alpine | 5432 | Business truth, traces, eval results |
+| redis | valkey/valkey:8.1-alpine | 6379 | Conversation memory, pending actions, caches |
+| keycloak | custom image from Keycloak 26.6.2 distribution on Java 21 Alpine | 8080 | Realm, users, RBAC tokens |
+| otel-collector | otel-contrib | 4318, 4317 | Receives OTLP traces/logs and exports traces to Jaeger |
+| jaeger | jaegertracing/jaeger:2.18.0 | 16686 | Local trace backend and UI |
 
 ## 3. Module diagram
 
@@ -197,7 +193,7 @@ Switching model mid-session is supported via the UI dropdown, the `model_key` re
 
 ## 10. Cost model
 
-`infrastructure/llm/cost_table.py` holds per-provider USD pricing. Every trace records `prompt_tokens`, `completion_tokens`, `estimated_cost_usd`, `llm_latency_ms`, `tool_latency_ms`, `total_latency_ms` so the question *"what does this cost per query?"* has a numeric answer at all times. The same low-cardinality totals are also emitted as OTel metrics (`acme_agent_*`) for operational views in Prometheus and Grafana.
+`infrastructure/llm/cost_table.py` holds per-provider USD pricing. Every trace records `prompt_tokens`, `completion_tokens`, `estimated_cost_usd`, `llm_latency_ms`, `tool_latency_ms`, `total_latency_ms` so the question *"what does this cost per query?"* has a numeric answer at all times. Those values are surfaced through the custom trace viewer and persisted in PostgreSQL rather than requiring a separate metrics dashboard.
 
 ## 11. Data-driven configuration
 

@@ -360,8 +360,8 @@ Before submission I ran a self-audit of the prototype against the brief and comm
 
 *(Builds on D-011. Previously mis-numbered as a second D-021; renumbered to keep the sequence unique.)*
 
-**Choice**: Keep the Decision Ledger as the audit source of truth, but export OTel traces to Jaeger and OTel metrics to Prometheus/Grafana in the local Compose stack. Warning-and-above Python logs are also exported through the collector when the OTel SDK is available.
+**Choice**: Keep the Decision Ledger as the audit source of truth, and export OTel traces to Jaeger in the local Compose stack. Warning-and-above Python logs are also exported through the collector when the OTel SDK is available.
 
-**Why**: The prior debug exporter proved instrumentation but discarded data. Jaeger makes the stored `otel_trace_id` actionable for engineers, while Prometheus/Grafana provide request, token, cost and latency trends without querying the audit tables.
+**Why**: The prior debug exporter proved instrumentation but discarded data. Jaeger makes the stored `otel_trace_id` actionable for engineers. The extra metrics-dashboard layer was intentionally removed from the prototype after Trivy hardening because it added operational surface and vulnerabilities without strengthening the traceability story; cost, token and latency data already live in the Decision Ledger and custom trace viewer.
 
-**Boundary**: OTel remains fail-soft and non-authoritative. If the collector or backend is down, compliance/audit views still read from PostgreSQL (`agent_traces`, `trace_events`, `tool_call_logs`, `rbac_decisions`). Metrics intentionally use low-cardinality labels such as role, intent, provider, model and status; usernames, trace refs and raw user text stay out of the OTel metrics path.
+**Boundary**: OTel remains fail-soft and non-authoritative. If the collector or backend is down, compliance/audit views still read from PostgreSQL (`agent_traces`, `trace_events`, `tool_call_logs`, `rbac_decisions`). Usernames, trace refs and raw user text stay out of the OTel telemetry path.

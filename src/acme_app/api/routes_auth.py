@@ -96,6 +96,7 @@ async def auth_me(user: CurrentUser = Depends(get_current_user)) -> dict:
         'username': user.username,
         'roles': user.roles,
         'auth_source': user.auth_source,
+        'heartbeat_seconds': settings.session_heartbeat_seconds,
     }
 
 
@@ -119,6 +120,7 @@ async def _resolve_login(username: str, password: str) -> tuple[CurrentUser | No
     access_token = ''
     auth_source = 'keycloak'
     subject = f'demo-{username}'
+    keycloak_session_id = ''
     keycloak_accepted = False
     try:
         token_payload = await keycloak_login(username, password)
@@ -127,6 +129,7 @@ async def _resolve_login(username: str, password: str) -> tuple[CurrentUser | No
             try:
                 kc_user = user_from_token(access_token)
                 subject = kc_user.subject
+                keycloak_session_id = kc_user.keycloak_session_id
                 keycloak_accepted = True
             except HTTPException as exc:
                 # JWT decoded but had no supported role at the Keycloak side.
@@ -171,6 +174,7 @@ async def _resolve_login(username: str, password: str) -> tuple[CurrentUser | No
         roles=db_roles,
         access_token=access_token,
         auth_source=auth_source,
+        keycloak_session_id=keycloak_session_id,
     ), None
 
 

@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     keycloak_realm: str = 'acme'
     keycloak_client_id: str = 'acme-assistant'
     keycloak_client_secret: str = ''
+    keycloak_admin_username: str = 'admin'
+    keycloak_admin_password: str = 'admin'
+    keycloak_session_enforcement_enabled: bool = True
 
     mcp_server_url: str = 'http://mcp-server:8001'
     otel_exporter_otlp_endpoint: str = 'http://otel-collector:4318'
@@ -46,6 +49,7 @@ class Settings(BaseSettings):
     debug_endpoints_enabled: bool = True
     demo_auth_fallback_enabled: bool = True
     demo_session_max_age_seconds: int = 8 * 3600
+    session_heartbeat_seconds: int = 5
 
 
 _DEFAULT_SECRETS = {

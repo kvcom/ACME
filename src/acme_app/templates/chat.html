@@ -221,6 +221,7 @@
 <body data-conversation-ref="{{ conversation_ref }}"
       data-role="{{ user.primary_role }}"
       data-model-key="{{ default_model_key }}"
+      data-session-heartbeat-seconds="{{ settings.session_heartbeat_seconds }}"
       {% if pending_action %}data-pending-action='{{ pending_action | tojson | forceescape }}'{% endif %}>
 <div class="app-slim">
 

@@ -35,6 +35,40 @@
   function escape(s) {
     return String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
   }
+
+  function redirectToLogin() {
+    const next = `${location.pathname}${location.search}`;
+    location.href = `/login?next=${encodeURIComponent(next)}`;
+  }
+
+  async function checkSession() {
+    try {
+      const resp = await fetch('/auth/me', {
+        headers: {'Accept': 'application/json'},
+        cache: 'no-store',
+      });
+      if (resp.status === 401) {
+        redirectToLogin();
+        return;
+      }
+      if (!resp.ok) {
+        scheduleSessionCheck(5);
+        return;
+      }
+      const data = await resp.json();
+      const seconds = Number(data.heartbeat_seconds || 5);
+      scheduleSessionCheck(seconds);
+    } catch {
+      scheduleSessionCheck(5);
+    }
+  }
+
+  function scheduleSessionCheck(seconds = 5) {
+    window.setTimeout(checkSession, Math.max(2, seconds) * 1000);
+  }
+
+  scheduleSessionCheck(Number(document.body.dataset.sessionHeartbeatSeconds || 5));
+
   function modelKey() { return currentModelKey || serverDefaultModelKey; }
   function convRef()  { return document.body.dataset.conversationRef || 'CONV-DEMO'; }
   const BADGE_CLASS = {

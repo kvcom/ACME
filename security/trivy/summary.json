@@ -1,0 +1,90 @@
+[
+  {
+    "Report": "trivy-fs-report.json",
+    "Critical": 0,
+    "High": 0,
+    "Medium": 0,
+    "Low": 0,
+    "Unknown": 0,
+    "Vulnerabilities": 0,
+    "Misconfigurations": 0,
+    "Secrets": 0
+  },
+  {
+    "Report": "trivy-image-acme-app.json",
+    "Critical": 0,
+    "High": 0,
+    "Medium": 0,
+    "Low": 0,
+    "Unknown": 0,
+    "Vulnerabilities": 0,
+    "Misconfigurations": 0,
+    "Secrets": 0
+  },
+  {
+    "Report": "trivy-image-acme-keycloak.json",
+    "Critical": 0,
+    "High": 0,
+    "Medium": 0,
+    "Low": 0,
+    "Unknown": 0,
+    "Vulnerabilities": 0,
+    "Misconfigurations": 0,
+    "Secrets": 0
+  },
+  {
+    "Report": "trivy-image-acme-mcp-server.json",
+    "Critical": 0,
+    "High": 0,
+    "Medium": 0,
+    "Low": 0,
+    "Unknown": 0,
+    "Vulnerabilities": 0,
+    "Misconfigurations": 0,
+    "Secrets": 0
+  },
+  {
+    "Report": "trivy-image-acme-postgres.json",
+    "Critical": 0,
+    "High": 0,
+    "Medium": 0,
+    "Low": 0,
+    "Unknown": 0,
+    "Vulnerabilities": 0,
+    "Misconfigurations": 0,
+    "Secrets": 0
+  },
+  {
+    "Report": "trivy-image-jaeger-2.18.0.json",
+    "Critical": 0,
+    "High": 0,
+    "Medium": 0,
+    "Low": 0,
+    "Unknown": 0,
+    "Vulnerabilities": 0,
+    "Misconfigurations": 0,
+    "Secrets": 0
+  },
+  {
+    "Report": "trivy-image-otel-collector-contrib-0.153.0.json",
+    "Critical": 0,
+    "High": 0,
+    "Medium": 0,
+    "Low": 0,
+    "Unknown": 0,
+    "Vulnerabilities": 0,
+    "Misconfigurations": 0,
+    "Secrets": 0
+  },
+  {
+    "Report": "trivy-image-valkey-8.1-alpine.json",
+    "Critical": 0,
+    "High": 0,
+    "Medium": 0,
+    "Low": 0,
+    "Unknown": 0,
+    "Vulnerabilities": 0,
+    "Misconfigurations": 0,
+    "Secrets": 0
+  }
+]

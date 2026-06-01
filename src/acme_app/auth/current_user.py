@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from fastapi import Cookie, Header, HTTPException
 
+from acme_app.auth.keycloak_client import KeycloakUnavailable, session_active
 from acme_app.auth.jwt_validator import decode_token, extract_roles
 from acme_app.config import settings
 
@@ -35,6 +36,7 @@ class CurrentUser:
     roles: list[str]
     access_token: str = ''
     auth_source: str = 'keycloak'
+    keycloak_session_id: str = ''
 
     @property
     def primary_role(self) -> str:
@@ -59,6 +61,7 @@ def _encode_session(user: CurrentUser) -> str:
         'r': user.roles,
         't': user.access_token,
         's': user.auth_source,
+        'sid': user.keycloak_session_id,
         'exp': int(time.time()) + settings.demo_session_max_age_seconds,
     }).encode()
     payload_b64 = base64.urlsafe_b64encode(raw).decode()
@@ -83,6 +86,7 @@ def _decode_session(token: str) -> CurrentUser | None:
             roles=list(data['r']),
             access_token=data.get('t', ''),
             auth_source=auth_source,
+            keycloak_session_id=str(data.get('sid') or ''),
         )
     except Exception:
         return None
@@ -103,7 +107,19 @@ def user_from_token(token: str) -> CurrentUser:
         roles=roles,
         access_token=token,
         auth_source='keycloak',
+        keycloak_session_id=str(claims.get('sid') or claims.get('session_state') or ''),
     )
+
+
+async def _ensure_keycloak_session_active(user: CurrentUser) -> None:
+    if user.auth_source != 'keycloak':
+        return
+    try:
+        if await session_active(user.subject, user.keycloak_session_id):
+            return
+    except KeycloakUnavailable as exc:
+        raise HTTPException(status_code=503, detail='Cannot verify Keycloak session') from exc
+    raise HTTPException(status_code=401, detail='Keycloak session is no longer active')
 
 
 async def get_current_user(
@@ -111,10 +127,13 @@ async def get_current_user(
     acme_session: str | None = Cookie(default=None),
 ) -> CurrentUser:
     if authorization.startswith('Bearer '):
-        return user_from_token(authorization.removeprefix('Bearer ').strip())
+        user = user_from_token(authorization.removeprefix('Bearer ').strip())
+        await _ensure_keycloak_session_active(user)
+        return user
     if acme_session:
         user = _decode_session(acme_session)
         if user is not None:
+            await _ensure_keycloak_session_active(user)
             return user
     raise HTTPException(status_code=401, detail='Not authenticated')
 

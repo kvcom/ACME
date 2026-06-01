@@ -10,12 +10,10 @@ processors:
   batch:
 
 exporters:
-  otlp/jaeger:
+  otlp_grpc/jaeger:
     endpoint: jaeger:4317
     tls:
       insecure: true
-  prometheus:
-    endpoint: 0.0.0.0:8889
   debug:
 
 service:
@@ -23,11 +21,7 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/jaeger, debug]
-    metrics:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [prometheus]
+      exporters: [otlp_grpc/jaeger, debug]
     logs:
       receivers: [otlp]
       processors: [batch]

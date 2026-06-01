@@ -15,8 +15,8 @@ import urllib.request
 from typing import Any
 
 from fastapi import HTTPException
-from jose import jwt
-from jose.exceptions import JWTError
+import jwt
+from jwt import PyJWK, PyJWTError
 
 from acme_app.config import settings
 
@@ -51,22 +51,28 @@ def decode_token(token: str) -> dict[str, Any]:
     JWKS unless `jwt_verify_signature` is explicitly disabled."""
     if not settings.jwt_verify_signature:
         logger.warning('JWT signature verification DISABLED (jwt_verify_signature=false)')
-        return jwt.get_unverified_claims(token)
+        return jwt.decode(token, options={'verify_signature': False, 'verify_aud': False})
 
     # Keycloak may not set an audience the client expects; we verify signature,
     # expiry and issuer but not audience.
     issuer = f'{settings.keycloak_url.rstrip("/")}/realms/{settings.keycloak_realm}'
-    options = {'verify_aud': False}
+    options = {'verify_aud': False, 'require': ['exp', 'iat']}
     for force in (False, True):  # one retry with a forced JWKS refresh on key miss
         try:
+            header = jwt.get_unverified_header(token)
+            kid = header.get('kid')
+            jwks = _fetch_jwks(force=force)
+            key_data = next((key for key in jwks.get('keys', []) if key.get('kid') == kid), None)
+            if key_data is None:
+                raise PyJWTError(f'No matching JWK for kid {kid!r}')
             return jwt.decode(
                 token,
-                _fetch_jwks(force=force),
+                PyJWK.from_dict(key_data).key,
                 algorithms=['RS256'],
                 issuer=issuer,
                 options=options,
             )
-        except JWTError as exc:
+        except PyJWTError as exc:
             msg = str(exc).lower()
             if not force and ('key' in msg or 'kid' in msg):
                 continue  # signing key may have rotated — refresh and retry once

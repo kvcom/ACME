@@ -19,7 +19,7 @@ The four questions, up front:
 - **Claude Code (Anthropic)** — implemented the UI from the Claude Design output, and handled large multi-file edits.
 - **Claude Opus 4.8 ↔ OpenAI Codex (GPT-5.5)** — two independent frontier models used to cross-check each other's work (see "The cross-check loop").
 - **Google Antigravity** — the final independent security and requirements audit at the end of the build.
-- Evaluated for the admin / observability surfaces before building bespoke in-app tooling: **DBeaver** (DB browsing), and the **OpenTelemetry** stack — **Jaeger**, **Prometheus**, **Grafana** — all run locally under **Docker Desktop** alongside Postgres and Redis.
+- Evaluated for the admin / observability surfaces before building bespoke in-app tooling: **DBeaver** (DB browsing), and **Jaeger** for OpenTelemetry traces, all run locally under **Docker Desktop** alongside Postgres and Redis/Valkey.
 
 ## How I actually worked — end to end
 
@@ -31,7 +31,7 @@ The four questions, up front:
 6. **UI design → implementation (Claude Design → Claude Code).** Used Claude Design to produce the UI from the specification, then passed that design (the generated `Acme Assistant UI` canvas) through to Claude Code to implement the front-end.
 7. **Test the experience (Codex + Claude + me).** Iterated between the two tools and hands-on testing — clicking through every flow, exercising edge cases, and reviewing the whole user experience end-to-end until it behaved exactly as I wanted.
 8. **Evaluate (Codex).** Ran the evaluation suite through Codex.
-9. **Bespoke internal tooling.** I tried the off-the-shelf options first — DBeaver for the database, and the Jaeger / Grafana / Prometheus UIs for traces and metrics, all wired up locally under Docker Desktop. They were fine as general tools but not well suited to this exercise, so I built bespoke in-app surfaces instead: the Decision Trace Viewer and the realtime DB Explorer. (The OpenTelemetry backends are still kept as the operational overlay — see DECISION_LOG D-023.) I also upgraded the bespoke MCP server, which is a separate topic.
+9. **Bespoke internal tooling.** I tried the off-the-shelf options first — DBeaver for the database and Jaeger for traces, wired up locally under Docker Desktop. They were fine as general tools but not well suited to this exercise, so I built bespoke in-app surfaces instead: the Decision Trace Viewer and the realtime DB Explorer. The extra metrics-dashboard layer was later removed because it did not add enough value for the extra local attack surface. I also upgraded the bespoke MCP server, which is a separate topic.
 10. **Final audit (Antigravity → Codex → Antigravity).** At the very end I ran a final security and requirements audit with Google Antigravity. It produced a list of changes that, on review, made sense; I passed those back to Codex to fix, then re-ran Antigravity to confirm no outstanding issues remained.
 
 ## The cross-check loop

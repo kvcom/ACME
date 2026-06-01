@@ -1562,12 +1562,12 @@ A dropdown on the composer lists every registered model (Claude, GPT, Gemini, lo
 
 ## 16.1 Positioning
 
-> OpenTelemetry tells us *what* ran (spans, latencies, metrics). The Decision Trace Viewer tells us *why* the agent acted, what evidence it used, whether it was allowed to act, and what outcome resulted.
+> OpenTelemetry tells us *what* ran (spans and latencies). The Decision Trace Viewer tells us *why* the agent acted, what evidence it used, whether it was allowed to act, and what outcome resulted.
 
 The two are complementary and the prototype ships **both**, with a clear separation of concerns:
 
 - **Decision Ledger (Postgres)** is the durable, append-only source of truth the product depends on (`agent_traces`, `trace_events`, `tool_call_logs`, `rbac_decisions`). The trace viewer and DB Explorer read it. It must never depend on the observability backend being up.
-- **OpenTelemetry** is the operational overlay. The app exports spans and metrics over OTLP to a Collector, which fans out to **Jaeger** (traces UI) and **Prometheus** (metrics). The collector config lives in `infra/otel/collector-config.yaml`; Jaeger and Prometheus run as Compose services. Every trace row stores its `otel_trace_id`, and an in-app popover (on the trace viewer and the DB Explorer) reconstructs the span timeline from our own data and deep-links to Jaeger when the trace is present there.
+- **OpenTelemetry** is the operational overlay. The app exports spans over OTLP to a Collector, which fans out to **Jaeger** (traces UI). The collector config lives in `infra/otel/collector-config.yaml`; Jaeger runs as a Compose service. Every trace row stores its `otel_trace_id`, and an in-app popover (on the trace viewer and the DB Explorer) reconstructs the span timeline from our own data and deep-links to Jaeger when the trace is present there.
 
 ## 16.2 Evidence-to-Action Decision Graph
 
@@ -2082,7 +2082,7 @@ Use Mermaid for diagrams.
 10. Skills design
 11. RBAC and propose-confirm flow
 12. Adversarial input handling
-13. Observability design (Decision Ledger + OpenTelemetry → Jaeger/Prometheus)
+13. Observability design (Decision Ledger + OpenTelemetry → Jaeger)
 14. Cost and token observability
 15. Evaluation suite and methodology
 16. Admin DB Explorer (drill-down, realtime, edit/append)
@@ -2122,7 +2122,6 @@ flowchart TD
     API --> DBX[Admin DB Explorer  - drill-down + realtime + edit]
     API --> OTEL[OpenTelemetry Collector]
     OTEL --> JAEGER[Jaeger  - traces]
-    OTEL --> PROM[Prometheus  - metrics]
     TRACE --> PG
     DBX --> PG
     PG -. LISTEN/NOTIFY .-> API
@@ -2665,7 +2664,7 @@ The prototype is done when you can show, live:
 22. Postgres is the authorization source of truth; a user added with no role cannot log in.
 23. The data model is append-only; the admin DB Explorer drills through relationships, updates live over WebSocket, and supports validated edit/append with AI-assisted record generation.
 24. The action catalogue and recommendation rules are data-driven; adding a row changes agent behaviour with no code change.
-25. OpenTelemetry traces reach Jaeger and metrics reach Prometheus; trace IDs link from the in-app viewer to Jaeger.
+25. OpenTelemetry traces reach Jaeger; trace IDs link from the in-app viewer to Jaeger.
 ```
 
 The core narrative for the panel:

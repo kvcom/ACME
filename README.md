@@ -25,11 +25,11 @@ Every component the brief mandates (Section 4) is present. This table is the fas
 | 4.2 At least one **MCP server** | ✅ | Custom Acme MCP server, [mcp_server/](mcp_server) — 8 governed business tools, separate container |
 | 4.3 At least one reusable **Skill** | ✅ | [skills/](src/acme_app/skills) — Customer Escalation Summary (the brief's suggested Skill) + Closure Readiness Check |
 | 4.4 **Keycloak** auth + RBAC (`sales_user` / `support_user` / `admin`) | ✅ | Keycloak container + realm import; [auth/](src/acme_app/auth), [policy/rbac.py](src/acme_app/policy/rbac.py) |
-| 4.5 **Docker Compose**, one command, all services | ✅ | `docker compose up --build` — app, mcp-server, postgres, redis, keycloak (+ otel/jaeger/prometheus/grafana) |
+| 4.5 **Docker Compose**, one command, all services | ✅ | `docker compose up --build` — app, mcp-server, postgres, redis, keycloak, OTel collector and Jaeger |
 | 4.6 **PostgreSQL** with `customers`, `issues`, `issue_updates`, `next_actions`, `users`/`user_roles` + seed data | ✅ | [infra/postgres/init.sql](infra/postgres/init.sql), [seed.sql](infra/postgres/seed.sql) — all five tables + more |
 | 4.7 **Redis** for memory / cache | ✅ | [redis_memory.py](src/acme_app/infrastructure/redis_memory.py) — conversation context, pending actions, lookup + tool-result caches |
 | 4.8 **Evaluation** (5–10 questions: tool selection, grounding, RBAC, action reasonableness) | ✅ (18 cases) | [evaluation/](src/acme_app/evaluation), [EVAL_RESULTS.md](EVAL_RESULTS.md) |
-| 4.8 **Observability** (tool logs, traces, error logs, latency) + bonus OTel/custom viewer | ✅ | `tool_call_logs`, `agent_traces`, `trace_events`; OpenTelemetry → Jaeger/Prometheus; custom Decision Trace Viewer |
+| 4.8 **Observability** (tool logs, traces, error logs, latency) + bonus OTel/custom viewer | ✅ | `tool_call_logs`, `agent_traces`, `trace_events`; OpenTelemetry → Jaeger; custom Decision Trace Viewer |
 | 4.9 **AI coding tool usage** documented | ✅ | [AI_USAGE.md](AI_USAGE.md) — tools, end-to-end workflow, cross-check loop, and errors caught |
 
 **Deliverables (Section 5):** (1) this repository; (2) this README — setup, architecture, trade-offs, AI usage; (3) [ARCHITECTURE.md](ARCHITECTURE.md) — system diagram + data flows; (4) [EVAL_RESULTS.md](EVAL_RESULTS.md) — eval output with commentary; (5) [AI_USAGE.md](AI_USAGE.md). No mandated component is missing or mocked; trade-offs on simplified components are in [DECISION_LOG.md](DECISION_LOG.md).
@@ -82,7 +82,6 @@ flowchart TD
     API --> DBX[Admin DB Explorer  - drill-down + realtime + edit]
     API --> OTEL[OpenTelemetry Collector]
     OTEL --> JAEGER[Jaeger  - traces]
-    OTEL --> PROM[Prometheus -> Grafana  - metrics]
     TRACE --> PG
     DBX --> PG
     PG -. LISTEN/NOTIFY .-> API
@@ -108,8 +107,6 @@ When the boot completes (60–90 s, mostly Keycloak):
 - Redis: Docker-internal `redis:6379`; Windows tools such as RedisInsight: `127.0.0.1:6380`
 - OpenTelemetry collector: <http://localhost:4318>
 - Jaeger traces: <http://localhost:16686>
-- Prometheus metrics: <http://localhost:9090>
-- Grafana: <http://localhost:3000> (admin / admin)
 
 ```bash
 docker compose ps                       # health overview
@@ -197,7 +194,7 @@ Three controls — length bound (4096 chars), pattern-flag regex for prompt-inje
 ## Observability
 
 - **OpenTelemetry traces** for manual agent spans plus FastAPI, HTTPX and asyncpg auto-instrumentation. The collector exports traces to Jaeger; the trace popover links a stored OTel trace ID to Jaeger when present.
-- **OpenTelemetry metrics** for agent request count, error count, token use, estimated cost, request latency, LLM latency, aggregate tool latency and individual tool-call latency. The collector exposes Prometheus-format metrics on `otel-collector:8889`; Prometheus scrapes them and Grafana is pre-wired to Prometheus.
+- **Cost, token and latency fields** are persisted in the Decision Ledger and visible in the custom trace viewer, keeping the observability proof inside Jaeger plus the app-owned audit surfaces.
 - **OpenTelemetry logs** for warning-and-above Python logs, correlated to the active trace context when emitted inside a traced request.
 - **Custom trace viewer** at `/traces/{trace_ref}` — Evidence-to-Action Decision Graph, full event log, tool calls with input/output summary, RBAC decisions, cost, tokens, latency. PII-redacted by default; admin can reveal the original.
 - **Cost table** per provider (`infrastructure/llm/cost_table.py`); every response carries its USD estimate.
@@ -217,6 +214,10 @@ Output: [EVAL_RESULTS.md](EVAL_RESULTS.md) and persisted rows in `eval_runs` / `
 ## Failure modes
 
 See [FAILURE_MODES.md](FAILURE_MODES.md) for the per-dependency matrix. Eval case 13 exercises the LLM-unavailable path.
+
+## Vulnerability and security testing
+
+Trivy scan reports live in [security/trivy](security/trivy). The dedicated [security testing README](security/trivy/README.md) explains the filesystem/image scan scope, the commands used, and the image hardening work that brought the active Compose stack to 0 critical, high, medium, low, misconfiguration, and secret findings.
 
 ## AI coding tool usage
 

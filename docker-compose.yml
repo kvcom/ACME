@@ -24,7 +24,7 @@ services:
         condition: service_started
 
   postgres:
-    image: postgres:16
+    build: ./infra/postgres
     environment:
       POSTGRES_DB: acme
       POSTGRES_USER: acme
@@ -41,18 +41,18 @@ services:
       retries: 10
 
   redis:
-    image: redis:7
+    image: valkey/valkey:8.1-alpine
     ports:
       - "6380:6379"
     expose:
       - "6379"
 
   keycloak:
-    image: quay.io/keycloak/keycloak:24.0
-    command: ["start-dev", "--import-realm"]
+    build: ./infra/keycloak
+    command: ["start", "--optimized", "--http-enabled=true", "--hostname-strict=false", "--http-host=0.0.0.0", "--import-realm"]
     environment:
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
     ports:
       - "8080:8080"
     volumes:
@@ -74,48 +74,20 @@ services:
         condition: service_healthy
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.106.1
+    image: otel/opentelemetry-collector-contrib:0.153.0
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
       - ./infra/otel/collector-config.yaml:/etc/otelcol/config.yaml:ro
     ports:
       - "4318:4318"
       - "4317:4317"
-      - "8889:8889"
     depends_on:
       jaeger:
         condition: service_started
 
   jaeger:
-    image: jaegertracing/all-in-one:1.57
+    image: jaegertracing/jaeger:2.18.0
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
       - "16686:16686"
-
-  prometheus:
-    image: prom/prometheus:v2.53.0
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.retention.time=7d"
-    volumes:
-      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    ports:
-      - "9090:9090"
-    depends_on:
-      otel-collector:
-        condition: service_started
-
-  grafana:
-    image: grafana/grafana:11.1.0
-    environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
-      GF_USERS_ALLOW_SIGN_UP: "false"
-    volumes:
-      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
-    ports:
-      - "3000:3000"
-    depends_on:
-      prometheus:
-        condition: service_started

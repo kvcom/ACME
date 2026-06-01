@@ -120,6 +120,7 @@ async def chat_page(
             'conversation_groups': groups,
             'history': history,
             'pending_action': pending_action,
+            'settings': settings,
         },
     )
 

@@ -12,15 +12,15 @@ How the system degrades when each dependency misbehaves. Eval case 13 covers the
 | Redis | Down | Chat still works for fresh queries. Follow-up references like *"that action"* return a clarification request because pending_action cannot be read. Tests have an in-memory fallback for unit testability. | *"I can answer about a specific customer or issue — please name it directly."* |
 | MCP server | Down | Tool calls fail individually via `MCPClient.MCPClientError`. The orchestrator records `tool_call_log` with status=error and continues with whatever facts are available, but writes will not happen. | *"I couldn't reach one of my data sources (get_open_issues). Trace TRC-…"* |
 | MCP tool | Returns malformed output | The MCP server's Pydantic schemas reject the input before any SQL runs. Bad output from SQL would surface as a tool error and be recorded as such. | Same as above. |
-| OpenTelemetry collector | Down | Traces, metrics and logs are dropped by the SDK/exporters. trace_events / agent_traces are still persisted to PostgreSQL because the custom trace viewer is independent of the OTel pipeline. | (No user-visible effect.) |
-| Jaeger / Prometheus / Grafana | Down | Operational trace or metric UIs are unavailable, but the app and Decision Ledger continue. The trace popover still reconstructs spans from PostgreSQL and Jaeger links can be copied/retried later. | (No user-visible effect inside the assistant.) |
+| OpenTelemetry collector | Down | Traces and logs are dropped by the SDK/exporters. trace_events / agent_traces are still persisted to PostgreSQL because the custom trace viewer is independent of the OTel pipeline. | (No user-visible effect.) |
+| Jaeger | Down | The operational trace UI is unavailable, but the app and Decision Ledger continue. The trace popover still reconstructs spans from PostgreSQL and Jaeger links can be copied/retried later. | (No user-visible effect inside the assistant.) |
 | Idempotency collision | Same `idempotency_key` confirmed twice | MCP `create_next_action` returns `{created: false, duplicate: true, existing_action_ref}` on the second attempt; no second row is written. | *"Action already exists (NA-…); no duplicate was created."* |
 | Confirmation token expired | Token older than 600 s | `verify_confirmation_token` returns expired; the API returns 403; the user is shown a fresh proposed-action card on re-asking. | *"This proposal has expired. Please re-issue the request."* |
 | Adversarial input | Prompt injection attempt | `adversarial.check` flags; planner returns refusal; no tools called; no RBAC bypass. Trace shows `adversarial_block` event. | *"I can't follow that instruction…"* (full text in orchestrator.) |
 
 ## Verifying
 
-- `GET /ready` reports per-dependency status. Use it as the basis for ops dashboards.
+- `GET /ready` reports per-dependency status and can be used by external monitoring if needed.
 - `make eval` includes case 13 (LLM unavailable) and the adversarial / idempotency cases.
 - `tests/test_failure_modes.py` covers missing-key, unknown-provider, and LLM-unavailable behaviour.
 - `tests/test_idempotency.py` covers token integrity and key stability.

@@ -1,0 +1,39 @@
+{
+  "SchemaVersion": 2,
+  "Trivy": {
+    "Version": "0.70.0"
+  },
+  "ReportID": "019e83ea-5921-7b1f-8862-7e3bb20133cb",
+  "CreatedAt": "2026-06-01T17:00:34.081729+01:00",
+  "ArtifactID": "sha256:e8fe61aa58e16f0e69b14574e529a84ad5877b1bbc647c6df8d0e404ec289431",
+  "ArtifactName": ".",
+  "ArtifactType": "repository",
+  "Metadata": {
+    "RepoURL": "https://github.com/kvcom/ACME.git",
+    "Branch": "master",
+    "Commit": "fd018c085036784c42d431bd9c7314486bd03ba5",
+    "CommitMsg": "Harden auth, propose-confirm, and GDPR erasure after self-audit (D-022).\n\nCo-authored-by: Cursor \u003ccursoragent@cursor.com\u003e",
+    "Author": "Konstantin Nikolaev \u003cknikolaev.home@gmail.com\u003e",
+    "Committer": "Konstantin Nikolaev \u003cknikolaev.home@gmail.com\u003e"
+  },
+  "Results": [
+    {
+      "Target": "Dockerfile",
+      "Class": "config",
+      "Type": "dockerfile",
+      "MisconfSummary": {
+        "Successes": 27,
+        "Failures": 0
+      }
+    },
+    {
+      "Target": "mcp_server/Dockerfile",
+      "Class": "config",
+      "Type": "dockerfile",
+      "MisconfSummary": {
+        "Successes": 27,
+        "Failures": 0
+      }
+    }
+  ]
+}

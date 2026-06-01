@@ -15,7 +15,7 @@ Built on the 1.0.0 foundation; see DECISION_LOG D-016 through D-022 for rational
 
 ### Admin & observability surfaces
 - Realtime admin **DB Explorer**: pivot drill-down across FK/reverse-FK links, live row pushes over WebSocket from Postgres triggers, and validated append/in-place edit for a curated table set (audit tables stay read-only) (D-018, D-021).
-- OpenTelemetry exported to Jaeger (traces) and Prometheus/Grafana (metrics); the Decision Ledger remains the audit source of truth.
+- OpenTelemetry exported to Jaeger for traces; the extra metrics-dashboard layer was removed from the local stack because the Decision Ledger and trace viewer carry the prototype's cost, token and latency evidence with less attack surface.
 
 ### Security & requirement-gap remediation (self-audit, D-022)
 - Session cookie is now HMAC-signed and tamper-evident (was base64-only and forgeable).

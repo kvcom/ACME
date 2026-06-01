@@ -31,13 +31,20 @@ def stub_db_roles(monkeypatch):
 
 
 def test_session_roundtrip():
-    user = CurrentUser(subject='abc', username='sam.support', roles=['support_user'], access_token='t')
+    user = CurrentUser(
+        subject='abc',
+        username='sam.support',
+        roles=['support_user'],
+        access_token='t',
+        keycloak_session_id='sid-123',
+    )
     cookie = _encode_session(user)
     decoded = _decode_session(cookie)
     assert decoded is not None
     assert decoded.username == 'sam.support'
     assert decoded.roles == ['support_user']
     assert decoded.auth_source == 'keycloak'
+    assert decoded.keycloak_session_id == 'sid-123'
 
 
 def test_demo_session_roundtrip_keeps_auth_source():
@@ -51,6 +58,50 @@ def test_demo_session_roundtrip_keeps_auth_source():
 
     assert decoded is not None
     assert decoded.auth_source == 'demo_fallback'
+    assert decoded.keycloak_session_id == ''
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_rejects_revoked_keycloak_session(monkeypatch):
+    from acme_app.auth import current_user
+
+    async def inactive(_subject, _session_id):
+        return False
+
+    monkeypatch.setattr(current_user, 'session_active', inactive)
+    user = CurrentUser(
+        subject='abc',
+        username='sarah.sales',
+        roles=['sales_user'],
+        access_token='token',
+        auth_source='keycloak',
+        keycloak_session_id='sid-123',
+    )
+
+    with pytest.raises(Exception) as exc:
+        await current_user.get_current_user(authorization='', acme_session=_encode_session(user))
+
+    assert getattr(exc.value, 'status_code', None) == 401
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_allows_demo_fallback_without_keycloak_check(monkeypatch):
+    from acme_app.auth import current_user
+
+    async def should_not_run(_subject, _session_id):
+        raise AssertionError('demo fallback must not call Keycloak session check')
+
+    monkeypatch.setattr(current_user, 'session_active', should_not_run)
+    user = CurrentUser(
+        subject='demo-sarah.sales',
+        username='sarah.sales',
+        roles=['sales_user'],
+        auth_source='demo_fallback',
+    )
+
+    resolved = await current_user.get_current_user(authorization='', acme_session=_encode_session(user))
+
+    assert resolved.username == 'sarah.sales'
 
 
 def test_primary_role_order():
