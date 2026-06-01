@@ -11,11 +11,32 @@ The four questions, up front:
 
 ## Tools used
 
-- **Cursor** — primary editor for most of the build
-- **Claude Code** — large multi-file refactors and the orchestrator skeleton
-- **Codex** — early scaffolding pass
-- **GitHub Copilot–style inline completion** — small in-editor completions
-- **ChatGPT** — planning, design sounding board, prompt drafts
+- **ChatGPT (OpenAI)** — initial brainstorming of the high-level architecture, requirements interpretation, and the overall shape of the solution.
+- **Claude (Anthropic), chat** — deeper architecture and requirements analysis, the end-to-end development plan, and one half of the cross-check loop below.
+- **Claude Design (Anthropic)** — produced the UI design from the specification (the design canvas at claude.ai/design), which then drove the front-end implementation.
+- **Cursor** — turned the plan into the project scaffold (directory layout, module skeletons, project wiring).
+- **OpenAI Codex (GPT-5.5)** — the main implementation agent that put the code on the scaffold, ran the evaluations, and applied the fixes I'd reviewed.
+- **Claude Code (Anthropic)** — implemented the UI from the Claude Design output, and handled large multi-file edits.
+- **Claude Opus 4.8 ↔ OpenAI Codex (GPT-5.5)** — two independent frontier models used to cross-check each other's work (see "The cross-check loop").
+- **Google Antigravity** — the final independent security and requirements audit at the end of the build.
+- Evaluated for the admin / observability surfaces before building bespoke in-app tooling: **DBeaver** (DB browsing), and the **OpenTelemetry** stack — **Jaeger**, **Prometheus**, **Grafana** — all run locally under **Docker Desktop** alongside Postgres and Redis.
+
+## How I actually worked — end to end
+
+1. **Brainstorm (ChatGPT).** Sketched the high-level architecture, read the requirements, and worked out roughly what the solution needed to be.
+2. **Deepen and plan (Claude, chat).** Cross-checked that thinking against Claude, went deeper on the architecture and on exactly which requirements were in scope and how to satisfy them, and had it produce the end-to-end development plan.
+3. **Scaffold (Cursor).** Handed the plan to Cursor to stand up the project structure — folders, empty modules, the skeleton everything would hang off.
+4. **Implement (Codex).** Used OpenAI Codex to put the substance on that scaffold — the concrete code each requirement needed.
+5. **Cross-check (Claude).** Reviewed Codex's output against Claude to surface anything that didn't match the requirements or didn't fit the design. This back-and-forth ran continuously, not as a one-off (see below).
+6. **UI design → implementation (Claude Design → Claude Code).** Used Claude Design to produce the UI from the specification, then passed that design (the generated `Acme Assistant UI` canvas) through to Claude Code to implement the front-end.
+7. **Test the experience (Codex + Claude + me).** Iterated between the two tools and hands-on testing — clicking through every flow, exercising edge cases, and reviewing the whole user experience end-to-end until it behaved exactly as I wanted.
+8. **Evaluate (Codex).** Ran the evaluation suite through Codex.
+9. **Bespoke internal tooling.** I tried the off-the-shelf options first — DBeaver for the database, and the Jaeger / Grafana / Prometheus UIs for traces and metrics, all wired up locally under Docker Desktop. They were fine as general tools but not well suited to this exercise, so I built bespoke in-app surfaces instead: the Decision Trace Viewer and the realtime DB Explorer. (The OpenTelemetry backends are still kept as the operational overlay — see DECISION_LOG D-023.) I also upgraded the bespoke MCP server, which is a separate topic.
+10. **Final audit (Antigravity → Codex → Antigravity).** At the very end I ran a final security and requirements audit with Google Antigravity. It produced a list of changes that, on review, made sense; I passed those back to Codex to fix, then re-ran Antigravity to confirm no outstanding issues remained.
+
+## The cross-check loop
+
+The most important part of how I work is **cross-checking between two genuinely different frontier models** — here, Claude Opus 4.8 and OpenAI Codex (GPT-5.5) — rather than trusting either one alone. One model implements; the other reviews. Because they're built and trained differently, the reviewer is effectively an independent second opinion, and in practice it catches mismatches and mistakes more reliably than a single average reviewer would. This ran throughout the build, not just at the end, and the final Antigravity audit added a third independent perspective. **On top of the tooling, I read the critical code myself** — anything touching auth, RBAC, writes, or secrets — because the cross-check loop accelerates judgement but doesn't replace my accountability for it.
 
 ## 1. What I delegated and why
 
@@ -60,18 +81,6 @@ In a real client engagement these are the parts where an AI mistake is expensive
 - **Secret and token handling.** HMAC signing, idempotency keys, and the confirmation flow — generated and reviewed by hand, with placeholders (not real secrets) in `.env.example`.
 - **Auth and trust boundaries.** Keycloak validation, the Postgres-as-authz decision, and the rule that the LLM's plan can never grant a role.
 - **The assessment narrative and trade-off claims.** The README positioning, DECISION_LOG entries, and any statement of "why" were written or substantially rewritten by hand — I will be defending them to a panel, so they have to be mine.
-
-## Supporting detail — code I read line-by-line
-
-Authentication flow, RBAC policy + `action_guard`, the action catalogue, `init.sql` and seed data, Docker Compose wiring, evaluation methodology and scoring axes, the HMAC/idempotency/confirmation security code, the adversarial check and PII redactor, and the propose-confirm flow end-to-end.
-
-## Process notes
-
-> All AI-generated code was reviewed, tested, and adjusted before submission.
-> Where the AI produced something that worked but was inelegant, I rewrote it.
-> Where the AI produced something that looked elegant but was wrong, I rewrote it and logged the prompt in `prompts/`.
-
-The `prompts/` folder captures the actual prompts I used, the output I got, and what I changed. This is one of the strongest signals I can leave: here's what I asked AI to do, here's what it did, here's what I had to change. I am not pretending the AI built this — I am showing my judgment.
 
 ## What this proves
 

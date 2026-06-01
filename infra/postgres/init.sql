@@ -259,11 +259,18 @@ CREATE OR REPLACE VIEW v_active_conversations AS
 -- and the user's own profile fields.
 
 CREATE OR REPLACE FUNCTION redact_user_pii(target_user_id UUID)
-RETURNS TABLE(users_redacted INT, traces_redacted INT) AS $$
+RETURNS TABLE(
+    users_redacted INT,
+    traces_redacted INT,
+    issue_updates_redacted INT,
+    next_actions_redacted INT
+) AS $$
 DECLARE
     target_username TEXT;
     u_count INT := 0;
     t_count INT := 0;
+    iu_count INT := 0;
+    na_count INT := 0;
 BEGIN
     SELECT username INTO target_username FROM users WHERE id = target_user_id;
     IF target_username IS NULL THEN
@@ -282,8 +289,24 @@ BEGIN
         OR username = target_username;
     GET DIAGNOSTICS t_count = ROW_COUNT;
 
+    -- Free-text the subject authored can carry their personal data, so it is
+    -- redacted too. issue_updates links to the actor only by name snapshot
+    -- (created_by); next_actions has the live FK plus the snapshot.
+    UPDATE issue_updates
+       SET update_text = '[REDACTED-GDPR]'
+     WHERE created_by = target_username;
+    GET DIAGNOSTICS iu_count = ROW_COUNT;
+
+    UPDATE next_actions
+       SET description = '[REDACTED-GDPR]'
+     WHERE created_by_user_id = target_user_id
+        OR created_by = target_username;
+    GET DIAGNOSTICS na_count = ROW_COUNT;
+
     users_redacted := u_count;
     traces_redacted := t_count;
+    issue_updates_redacted := iu_count;
+    next_actions_redacted := na_count;
     RETURN NEXT;
 END;
 $$ LANGUAGE plpgsql;

@@ -7,7 +7,7 @@ How the system degrades when each dependency misbehaves. Eval case 13 covers the
 | LLM API | Timeout / 429 / 5xx | The selected provider raises a typed failure; the orchestrator records an LLM-unavailable trace and does not invent grounded facts. Auto routes may try the configured next real provider before surfacing the error. | *"The assistant is temporarily unable to answer. Trace TRC-... recorded."* |
 | LLM API | Missing API key | Provider constructors fail fast with a clear configuration error. The app does not silently switch to a mock model. | The user sees the LLM-unavailable message and the trace captures the failed provider path. |
 | Keycloak | Down at startup | App still starts. `/login` falls back to demo cookie session for the three demo users (DECISION_LOG D-005). | Login still works for demo users; production users see *"Authentication unavailable, please retry."* |
-| Keycloak | Down mid-session | JWT decoding still works (we decode without verification — D-004); expired tokens cause 401. | *"Session expired. Please sign in again."* |
+| Keycloak | Down mid-session | The signed session cookie keeps the session valid until it expires; new bearer-token verification needs the realm JWKS, which the app caches (1 h TTL) so a brief outage is tolerated. A JWKS fetch failure on an uncached token returns 503 rather than trusting it. Expired tokens/cookies cause 401. | *"Session expired. Please sign in again."* |
 | PostgreSQL | Down | All endpoints return 503. No fallback. Healthcheck flags red. | *"The system is unavailable. Please try again shortly."* |
 | Redis | Down | Chat still works for fresh queries. Follow-up references like *"that action"* return a clarification request because pending_action cannot be read. Tests have an in-memory fallback for unit testability. | *"I can answer about a specific customer or issue — please name it directly."* |
 | MCP server | Down | Tool calls fail individually via `MCPClient.MCPClientError`. The orchestrator records `tool_call_log` with status=error and continues with whatever facts are available, but writes will not happen. | *"I couldn't reach one of my data sources (get_open_issues). Trace TRC-…"* |
@@ -28,6 +28,6 @@ How the system degrades when each dependency misbehaves. Eval case 13 covers the
 ## What is intentionally not handled
 
 - **Network partition between app and MCP under load** — no circuit breaker yet; documented as a production hardening item.
-- **Keycloak realm key rotation** — JWT signature verification is off (D-004); rotation has no effect on the demo.
+- **Keycloak realm key rotation** — JWT signatures are verified against the cached realm JWKS (D-004); on an unknown `kid` the app refreshes the key set once and retries, so a single rotation is handled, but aggressive rotation within the cache window could briefly 401 until the next refresh.
 - **PostgreSQL failover** — single instance; no read replica. Acceptable for an MVP.
 - **Streaming back-pressure** — SSE queue is unbounded per request. A pathological tool that produces thousands of events would balloon memory.

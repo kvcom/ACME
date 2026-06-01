@@ -82,6 +82,43 @@ def test_decode_session_invalid_returns_none():
     assert _decode_session('not-a-real-cookie') is None
 
 
+def test_tampered_payload_is_rejected():
+    """Flipping a role in the payload must invalidate the signature so the
+    cookie cannot be forged to escalate privilege."""
+    import base64
+    import json
+
+    user = CurrentUser(subject='abc', username='sarah.sales', roles=['sales_user'])
+    cookie = _encode_session(user)
+    payload_b64, _, sig = cookie.partition('.')
+    forged = json.loads(base64.urlsafe_b64decode(payload_b64.encode()))
+    forged['r'] = ['admin']  # privilege escalation attempt
+    forged_b64 = base64.urlsafe_b64encode(json.dumps(forged).encode()).decode()
+    # Re-attach the OLD signature (attacker cannot recompute it without secret).
+    tampered = f'{forged_b64}.{sig}'
+
+    assert _decode_session(tampered) is None
+
+
+def test_unsigned_cookie_is_rejected():
+    """A base64-only cookie (the pre-fix format) has no signature and must be
+    rejected outright."""
+    import base64
+    import json
+
+    payload = {'sub': 'a', 'u': 'sarah.sales', 'r': ['admin'], 'exp': 9_999_999_999}
+    unsigned = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+
+    assert _decode_session(unsigned) is None
+
+
+def test_wrong_signature_is_rejected():
+    user = CurrentUser(subject='abc', username='sam.support', roles=['support_user'])
+    payload_b64 = _encode_session(user).partition('.')[0]
+
+    assert _decode_session(f'{payload_b64}.deadbeef') is None
+
+
 def test_decode_session_expired_returns_none(monkeypatch):
     import base64
     import json

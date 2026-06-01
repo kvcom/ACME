@@ -63,6 +63,11 @@ def run(
         rec = {'action_type': action_type, 'priority': priority,
                'title': f'Close {issue_ref}',
                'rationale': 'All closure conditions satisfied.'}
+        # When the recommended action updates the issue lifecycle, carry the
+        # concrete target status so propose-confirm can dispatch
+        # update_issue_status (otherwise the proposal has no status to apply).
+        if action_type == 'UPDATE_ISSUE_STATUS':
+            rec['new_status'] = 'Resolved'
         reason = 'All closure conditions satisfied.'
     else:
         rec = {'action_type': action_type, 'priority': priority,

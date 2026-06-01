@@ -47,6 +47,7 @@ from acme_app.application.db_explorer import (
 )
 from acme_app.application.realtime import broadcaster as realtime_broadcaster
 from acme_app.auth.current_user import CurrentUser, _decode_session, get_current_user
+from acme_app.auth.role_store import get_roles_for_username
 from acme_app.config import settings
 from acme_app.infrastructure.db.session import AsyncSessionLocal, get_db_session
 
@@ -55,6 +56,7 @@ _log = logging.getLogger(__name__)
 
 ROW_LIMIT_DEFAULT = 100
 ROW_LIMIT_MAX = 500
+WS_REAUTH_INTERVAL_S = 30
 
 
 def _require_admin(user: CurrentUser) -> CurrentUser:
@@ -801,10 +803,30 @@ async def db_explorer_ws(websocket: WebSocket) -> None:
                     )
                     await websocket.send_json({'watching': new_table})
 
+        async def reauth_loop() -> None:
+            # Privilege revocation must not wait for reconnect. Re-check
+            # admin authorisation periodically: cookie expiry (signature/exp
+            # via _decode_session) AND the live Postgres role grant. If the
+            # user loses admin mid-session, close the socket promptly.
+            while True:
+                await asyncio.sleep(WS_REAUTH_INTERVAL_S)
+                still = _admin_from_cookie(websocket.cookies.get('acme_session'))
+                if still is None:
+                    await websocket.close(code=1008, reason='session expired')
+                    return
+                try:
+                    roles = await get_roles_for_username(still)
+                except Exception:
+                    continue  # transient DB error — don't drop on a blip
+                if not roles or 'admin' not in roles:
+                    await websocket.close(code=1008, reason='admin revoked')
+                    return
+
         push_task = asyncio.create_task(push_events())
         read_task = asyncio.create_task(read_control())
+        reauth_task = asyncio.create_task(reauth_loop())
         done, pending = await asyncio.wait(
-            {push_task, read_task}, return_when=asyncio.FIRST_COMPLETED,
+            {push_task, read_task, reauth_task}, return_when=asyncio.FIRST_COMPLETED,
         )
         for t in pending:
             t.cancel()

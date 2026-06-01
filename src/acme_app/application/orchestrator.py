@@ -54,6 +54,7 @@ from acme_app.application.planner import create_plan
 from acme_app.application.prompts import NARRATION_PREAMBLE
 from acme_app.application.propose_confirm import (
     build_proposed_action,
+    confirm_payload,
     get_pending_action,
     stage_pending_action,
 )
@@ -1899,21 +1900,13 @@ async def _confirm_pending(
             llm_response=llm_plan_response,
         )
 
-    payload = {
-        'actor': {'username': username, 'role': role},
-        'issue_ref': pending['issue_ref'],
-        'action_type': pending['action_type'],
-        'title': pending.get('title', ''),
-        'description': pending.get('description', ''),
-        'priority': pending.get('priority', 'Medium'),
-        'due_at': pending.get('due_at'),
-        'evidence': pending.get('evidence', []),
-        'idempotency_key': pending['idempotency_key'],
-        'confirmation_token': pending['confirmation_token'],
-    }
+    # Dispatch the correct MCP tool for this proposal (create / update_issue_status
+    # / update_next_action). Centralised in confirm_payload so this path and the
+    # /actions/confirm route never drift.
+    tool_name, payload = confirm_payload(pending, {'username': username, 'role': role})
     try:
-        result = await mcp.call_tool('create_next_action', payload)
-        ledger.tool('create_next_action', payload, ledger_mod.summarise_output(result), 'ok', 0)
+        result = await mcp.call_tool(tool_name, payload)
+        ledger.tool(tool_name, payload, ledger_mod.summarise_output(result), 'ok', 0)
         ledger.event('action_confirmed', 'action.confirmed', result)
         await _emit(event_sink, 'action_confirmed', result)
         if result.get('duplicate'):
@@ -1922,12 +1915,17 @@ async def _confirm_pending(
         elif result.get('created'):
             answer = f'Action {result["action_ref"]} created for {pending["issue_ref"]} and assigned to {username}.'
             badge = 'Action Created'
+        elif result.get('updated'):
+            ref = result.get('action_ref') or result.get('issue_ref') or pending.get('issue_ref')
+            new_status = result.get('new_status') or pending.get('new_status') or 'updated'
+            answer = f'{ref} updated to {new_status}.'
+            badge = 'Action Created'
         else:
             answer = f'Confirmation rejected: {result.get("reason")}'
             badge = 'Permission Denied'
     except MCPClientError as exc:
-        ledger.event('error', 'create_next_action.error', {'error': str(exc)}, status='error')
-        answer = f'Failed to create action: {exc}'
+        ledger.event('error', f'{tool_name}.error', {'error': str(exc)}, status='error')
+        answer = f'Failed to apply action: {exc}'
         badge = 'Insufficient Evidence'
 
     prompt_tokens = llm_plan_response.prompt_tokens
@@ -1939,7 +1937,8 @@ async def _confirm_pending(
                   'action_type': pending.get('action_type'),
                   'issue_ref': pending.get('issue_ref'),
                   'created': bool(result.get('created')) if 'result' in locals() else False,
-                  'duplicate': bool(result.get('duplicate')) if 'result' in locals() else False})
+                  'duplicate': bool(result.get('duplicate')) if 'result' in locals() else False,
+                  'updated': bool(result.get('updated')) if 'result' in locals() else False})
     await repo.conversation_upsert(session, conversation_ref, username, query[:200])
     await ledger_mod.persist(
         ledger=ledger, session=session,
@@ -1954,7 +1953,7 @@ async def _confirm_pending(
     return ChatResponse(
         trace_ref=ledger.trace_ref, intent='confirm_pending_action', answer=answer, badge=badge,
         evidence=list(pending.get('evidence', [])),
-        tools_called=['create_next_action'], skills_invoked=[],
+        tools_called=[tool_name], skills_invoked=[],
         cost_usd=cost, total_tokens=prompt_tokens + completion_tokens,
         latency_ms=int(time.time() * 1000) - started_ms,
         provider=provider_name, model=llm_plan_response.model,

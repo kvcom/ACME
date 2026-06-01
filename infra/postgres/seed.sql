@@ -86,6 +86,7 @@ INSERT INTO action_catalogue (action_type, label, description, allowed_roles, re
 ('PREPARE_RECOVERY_PLAN','Prepare Recovery Plan','Prepare written recovery plan',ARRAY['support_user','admin'],ARRAY['due_at'],'high'),
 ('SCHEDULE_REVIEW','Schedule Review','Schedule a review meeting',ARRAY['support_user','admin'],ARRAY['due_at'],'low'),
 ('UPDATE_ISSUE_STATUS','Update Issue Status','Update the status of an issue',ARRAY['support_user','admin'],ARRAY['new_status'],'medium'),
+('UPDATE_NEXT_ACTION','Update Next Action','Mark an existing next action complete, in progress, or cancelled (cancel is admin-only)',ARRAY['support_user','admin'],ARRAY['action_ref','new_status'],'medium'),
 ('CREATE_EXEC_SUMMARY','Create Executive Summary','Produce a management summary',ARRAY['admin'],ARRAY['description'],'low')
 ON CONFLICT DO NOTHING;
 

@@ -309,7 +309,14 @@ def update_next_action(
         return {'updated': False, 'denied': True, 'reason': 'Only admin may cancel actions'}
     if role not in ('support_user', 'admin'):
         return {'updated': False, 'denied': True, 'reason': f'{role} cannot update actions'}
-    ok, reason = _verify_token(confirmation_token)
+    # Bind the token to this specific action_ref so a token minted for one
+    # action cannot be replayed against another. The token's resource slot
+    # carries the action_ref for update_next_action proposals (see propose_confirm).
+    ok, reason = _verify_token(
+        confirmation_token,
+        expected_action_type='UPDATE_NEXT_ACTION',
+        expected_issue_ref=action_ref,
+    )
     if not ok:
         return {'updated': False, 'denied': True, 'reason': f'confirmation_token invalid: {reason}'}
     with get_conn() as conn, conn.cursor() as cur:
@@ -335,7 +342,11 @@ def update_issue_status(
     role = actor.get('role', '')
     if role not in ('support_user', 'admin'):
         return {'updated': False, 'denied': True, 'reason': f'{role} cannot update issue status'}
-    ok, reason = _verify_token(confirmation_token, expected_issue_ref=issue_ref)
+    ok, reason = _verify_token(
+        confirmation_token,
+        expected_action_type='UPDATE_ISSUE_STATUS',
+        expected_issue_ref=issue_ref,
+    )
     if not ok:
         return {'updated': False, 'denied': True, 'reason': f'confirmation_token invalid: {reason}'}
     with get_conn() as conn, conn.cursor() as cur:

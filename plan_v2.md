@@ -25,7 +25,7 @@ This version closes gaps that an experienced assessor panel would probe. The new
 - Evaluation methodology is documented, variance is reported across 3 runs
 - ARCHITECTURE.md and FAILURE_MODES.md are explicit deliverables with templates
 - Decision Log records every design trade-off as it was made
-- prompts/ folder captures actual prompts given to Cursor / Claude Code / Codex / Antigravity
+- AI_USAGE.md records the tools used (Cursor / Claude / Claude Design / Claude Code / Codex / Antigravity), the end-to-end workflow, and the cross-check loop
 - Repository hygiene (ruff, black, mypy, pre-commit, UTF-8 no-BOM enforcement)
 - Determinism note: risk classification is rule-based, LLM only narrates
 ```
@@ -319,14 +319,6 @@ acme-operations-assistant/
   .pre-commit-config.yaml
   pyproject.toml
   Makefile
-
-  prompts/
-    01_scaffold_mcp_server.md
-    02_agent_planner.md
-    03_skills_registry.md
-    04_trace_viewer.md
-    05_eval_runner.md
-    README.md                    # explains how each prompt was used and what was rewritten
 
   src/
     acme_app/
@@ -2187,23 +2179,12 @@ Add to the file:
 ```text
 All AI-generated code was reviewed, tested and adjusted before submission.
 Where the AI produced something that worked but was inelegant, it was rewritten.
-Where the AI produced something that looked elegant but was wrong, it was rewritten and the prompt was logged in prompts/.
+Where the AI produced something that looked elegant but was wrong, it was rewritten.
 ```
 
-## prompts/ folder
+## AI usage record
 
-For each of these components, capture (a) the prompt given to the coding agent, (b) the produced output (or link to commit), (c) what was rewritten and why:
-
-```text
-prompts/01_scaffold_mcp_server.md
-prompts/02_agent_planner.md
-prompts/03_skills_registry.md
-prompts/04_trace_viewer.md
-prompts/05_eval_runner.md
-prompts/README.md
-```
-
-This is one of the strongest signals you can leave: "Here's what I asked AI to do, here's what it did, here's what I had to change. I'm not pretending the AI built this — I'm showing my judgment."
+As built, the AI-usage record lives entirely in `AI_USAGE.md` (tools, end-to-end workflow, the two-model cross-check loop, and the concrete errors caught and corrected) plus the `DECISION_LOG.md`. An earlier plan to keep a separate `prompts/` folder of verbatim prompt logs was dropped — without a faithful capture of the actual prompts it would have over-claimed, so the honest record is the narrative in `AI_USAGE.md` instead.
 
 ---
 
@@ -2315,7 +2296,7 @@ Acceptance: trace viewer shows graph with cost and tokens, streaming works in UI
 ARCHITECTURE.md complete
 FAILURE_MODES.md complete
 DECISION_LOG.md complete
-AI_USAGE.md complete with prompts/ folder
+AI_USAGE.md complete (tools, workflow, cross-check loop, errors caught)
 EVAL_RESULTS.md with 3-run variance
 README polished with design-principles paragraph
 demo script
@@ -2543,7 +2524,7 @@ idempotency on create_next_action
 ```text
 README.md
 ARCHITECTURE.md
-AI_USAGE.md with prompts/ folder
+AI_USAGE.md (tools, workflow, cross-check loop)
 EVAL_RESULTS.md
 FAILURE_MODES.md
 DECISION_LOG.md
@@ -2627,7 +2608,7 @@ Deliverables:
 - A custom trace viewer showing the Evidence-to-Action Decision Graph including token usage and estimated USD cost.
 - OpenTelemetry spans for auth, adversarial check, PII redaction, planning, LLM, MCP tools, Skills, Redis, DB, propose, confirm.
 - An evaluation suite with 13 cases covering tool selection, grounding, RBAC, action reasonableness, adversarial input, idempotency, and LLM failure mode. Run the suite 3 times and report variance.
-- README.md (with the design-principles paragraph), ARCHITECTURE.md, AI_USAGE.md (with prompts/ folder), EVAL_RESULTS.md, FAILURE_MODES.md, DECISION_LOG.md, CHANGELOG.md.
+- README.md (with the design-principles paragraph), ARCHITECTURE.md, AI_USAGE.md, EVAL_RESULTS.md, FAILURE_MODES.md, DECISION_LOG.md, CHANGELOG.md.
 - pytest tests for auth, RBAC, MCP tools, Skills, Redis memory, traces, eval runner, adversarial input, idempotency, propose-confirm, PII redactor, failure modes.
 
 Build order:
@@ -2679,7 +2660,7 @@ The prototype is done when you can show, live:
 17. PII redaction is applied at display.
 18. Evaluation suite (13 cases × 3 runs) produces documented results with variance.
 19. README explains architecture, design principles, trade-offs and AI usage.
-20. FAILURE_MODES.md, DECISION_LOG.md, ARCHITECTURE.md and prompts/ folder are all present and substantive.
+20. FAILURE_MODES.md, DECISION_LOG.md, ARCHITECTURE.md and AI_USAGE.md are all present and substantive.
 21. Backup recorded demo exists for the panel in case of LLM outage.
 22. Postgres is the authorization source of truth; a user added with no role cannot log in.
 23. The data model is append-only; the admin DB Explorer drills through relationships, updates live over WebSocket, and supports validated edit/append with AI-assisted record generation.

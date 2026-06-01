@@ -26,13 +26,13 @@ Each entry: D-NNN, the choice, why, and the production replacement.
 
 **Production**: Authorization Code with PKCE; short-lived access tokens; refresh-token rotation; cookie-bound session backed by server-side store.
 
-## D-004 · JWT decoded without signature verification
+## D-004 · JWT signature verification against the realm JWKS
 
-**Choice**: `jose.jwt.get_unverified_claims` rather than full JWKS verification.
+**Choice**: Bearer tokens are verified against the Keycloak realm JWKS (RS256) before any claim is trusted — `jwt.decode(..., algorithms=['RS256'], issuer=...)` with the cached key set, refreshed once on an unknown-`kid`. Verification is **on by default** and can only be turned off via `JWT_VERIFY_SIGNATURE=false` for an offline / no-Keycloak demo.
 
-**Why**: Same as D-003. The Keycloak realm is local-only, and verifying the signature buys no security in this environment.
+**Why (updated, see D-022)**: This originally used `get_unverified_claims` for a local-only demo. The self-audit flagged that an attacker who can reach the app could craft a self-signed JWT asserting the `admin` realm role and bypass authorization, so verification is now enforced. Expiry and issuer are checked; audience is not (Keycloak's `aud` for a direct-grant client is not stable across setups).
 
-**Production**: Fetch realm JWKS at startup, cache, rotate. Reject tokens with unrecognised `kid` or invalid signature. Validate `aud`, `iss`, `exp`, `nbf`.
+**Production**: Also validate `aud`/`azp` against the expected client, add `nbf` skew tolerance, and pre-warm the JWKS at startup rather than lazily on first request.
 
 ## D-005 · Demo cookie session as a fallback when Keycloak is unavailable
 
@@ -91,14 +91,6 @@ Each entry: D-NNN, the choice, why, and the production replacement.
 **Why**: The custom trace viewer is the panel demo signal. Making it depend on OTel would couple a UX feature to an infrastructure component that can be down.
 
 **Production**: Both. OTel for cross-service correlation; the ledger table for the operator-facing trace viewer.
-
-## D-021 · OpenTelemetry is an operational overlay with real local backends
-
-**Choice**: Keep the Decision Ledger as the audit source of truth, but export OTel traces to Jaeger and OTel metrics to Prometheus/Grafana in the local Compose stack. Warning-and-above Python logs are also exported through the collector when the OTel SDK is available.
-
-**Why**: The prior debug exporter proved instrumentation but discarded data. Jaeger makes the stored `otel_trace_id` actionable for engineers, while Prometheus/Grafana provide request, token, cost and latency trends without querying the audit tables.
-
-**Boundary**: OTel remains fail-soft and non-authoritative. If the collector or backend is down, compliance/audit views still read from PostgreSQL (`agent_traces`, `trace_events`, `tool_call_logs`, `rbac_decisions`). Metrics intentionally use low-cardinality labels such as role, intent, provider, model and status; usernames, trace refs and raw user text stay out of the OTel metrics path.
 
 ## D-012 · PII redaction is regex-based for MVP
 
@@ -342,3 +334,34 @@ B was chosen. It removes the single-source-of-truth ambiguity (with A, two syste
 - Optimistic-concurrency tokens to detect concurrent edits.
 - Swap the AI-assist model to a paid provider per field if local quality is insufficient (one call site).
 - For genuinely new *tables* (not rows), the registry is still code — making the table/relationship registry itself data-driven is a larger, separate step.
+
+
+## D-022 · Self-audit security & requirement-gap remediation
+
+Before submission I ran a self-audit of the prototype against the brief and common attack surfaces, then fixed every finding rather than just documenting it. This entry records the changes and the reasoning.
+
+**1. Session cookie is now HMAC-signed (was forgeable).** `acme_session` was base64-only JSON: a client could decode it, change `"r": ["sales_user"]` to `["admin"]`, re-encode, and escalate. The cookie is now `<payload_b64>.<hmac_sha256(session_signing_secret, payload_b64)>`; `_decode_session` verifies the signature with a constant-time compare (`hmac.compare_digest`) before trusting any field, and rejects unsigned/tampered cookies. Covered by `test_auth.py::test_tampered_payload_is_rejected` / `test_unsigned_cookie_is_rejected`.
+
+**2. JWT signatures are verified (D-004 updated).** `get_unverified_claims` → JWKS RS256 verification, on by default.
+
+**3. Propose-confirm now reaches all three write tools (requirement gap, brief §4.4).** The confirm path was hard-coded to `create_next_action`, so confirming an `UPDATE_ISSUE_STATUS` or `UPDATE_NEXT_ACTION` recommendation wrongly inserted a new `next_actions` row. A single `confirm_payload(pending, actor)` dispatcher in `application/propose_confirm.py` now maps `target_tool` → the correct MCP tool and payload, and **both** confirm callers (the `/actions/confirm` route and the orchestrator's `_confirm_pending`) go through it, so they can't drift. `closure_readiness_check` now carries `new_status='Resolved'` so the issue-status update is actually executable; `UPDATE_NEXT_ACTION` was added to the `action_catalogue` (admin/support; cancel is admin-only) so it passes `can_propose`.
+
+**4. Confirmation tokens are bound to the resource they act on (replay hardening, extends D-007).** `build_proposed_action` binds the token's resource slot to the `action_ref` for `update_next_action` and to the `issue_ref` for creates/issue-status updates; the MCP `update_next_action` / `update_issue_status` tools verify the token with both `expected_action_type` and `expected_issue_ref`, so a token minted for one action/issue cannot be replayed against another. Covered by `test_mcp_tools.py::test_verify_token_binds_to_resource_ref` / `…binds_to_action_type`.
+
+**5. DB Explorer WebSocket re-authorizes mid-session.** `/db-explorer/ws` checked admin only on connect, so a revoked admin kept a live socket. A `reauth_loop` now re-checks every 30 s — cookie validity (signature + expiry) *and* the live Postgres role grant via `get_roles_for_username` — and closes the socket (1008) if admin is lost. Privilege revocation no longer waits for reconnect.
+
+**6. Default secrets fail closed outside dev.** `confirmation_hmac_secret` and the new `session_signing_secret` default to dev placeholders. `_guard_secrets()` warns in dev/test/local but **raises** at startup in any other `APP_ENV`, so a real deployment can't accidentally run on the shared dev secret.
+
+**7. GDPR erasure now covers authored free text.** `redact_user_pii()` previously redacted only `users.*` and `agent_traces.user_query`. It now also overwrites `issue_updates.update_text` (matched by `created_by`) and `next_actions.description` (matched by `created_by_user_id` or `created_by`), and returns counts for both. Applied live and shipped as migration `d022_security_hardening.sql` (idempotent; drops the function first because the return signature changed).
+
+**Trade-offs kept (not bugs)**: the cookie still carries a role snapshot rather than hitting the DB per request (D-016) — acceptable because the high-value live surface, the DB Explorer socket, now re-checks the DB directly; and JWT audience is still unverified for the reasons in D-004.
+
+## D-023 · OpenTelemetry is an operational overlay with real local backends
+
+*(Builds on D-011. Previously mis-numbered as a second D-021; renumbered to keep the sequence unique.)*
+
+**Choice**: Keep the Decision Ledger as the audit source of truth, but export OTel traces to Jaeger and OTel metrics to Prometheus/Grafana in the local Compose stack. Warning-and-above Python logs are also exported through the collector when the OTel SDK is available.
+
+**Why**: The prior debug exporter proved instrumentation but discarded data. Jaeger makes the stored `otel_trace_id` actionable for engineers, while Prometheus/Grafana provide request, token, cost and latency trends without querying the audit tables.
+
+**Boundary**: OTel remains fail-soft and non-authoritative. If the collector or backend is down, compliance/audit views still read from PostgreSQL (`agent_traces`, `trace_events`, `tool_call_logs`, `rbac_decisions`). Metrics intentionally use low-cardinality labels such as role, intent, provider, model and status; usernames, trace refs and raw user text stay out of the OTel metrics path.

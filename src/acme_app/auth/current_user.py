@@ -5,6 +5,8 @@ the Keycloak-issued role envelope.
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import time
 from dataclasses import dataclass
@@ -16,6 +18,14 @@ from acme_app.config import settings
 
 VALID_ROLES = {'sales_user', 'support_user', 'admin'}
 SESSION_COOKIE = 'acme_session'
+
+
+def _sign(payload_b64: str) -> str:
+    """HMAC-SHA256 over the base64 payload, returned as urlsafe-b64 (no pad)."""
+    sig = hmac.new(
+        settings.session_signing_secret.encode(), payload_b64.encode(), hashlib.sha256
+    ).digest()
+    return base64.urlsafe_b64encode(sig).decode().rstrip('=')
 
 
 @dataclass(frozen=True)
@@ -36,6 +46,13 @@ class CurrentUser:
 
 
 def _encode_session(user: CurrentUser) -> str:
+    """Produce a tamper-evident session cookie: `<payload_b64>.<hmac_sig>`.
+
+    The payload is signed with HMAC-SHA256. A client cannot change the roles,
+    username or any field without invalidating the signature, so the cookie
+    cannot be forged to escalate privilege (the previous base64-only form
+    could be).
+    """
     raw = json.dumps({
         'sub': user.subject,
         'u': user.username,
@@ -44,12 +61,17 @@ def _encode_session(user: CurrentUser) -> str:
         's': user.auth_source,
         'exp': int(time.time()) + settings.demo_session_max_age_seconds,
     }).encode()
-    return base64.urlsafe_b64encode(raw).decode()
+    payload_b64 = base64.urlsafe_b64encode(raw).decode()
+    return f'{payload_b64}.{_sign(payload_b64)}'
 
 
 def _decode_session(token: str) -> CurrentUser | None:
     try:
-        raw = base64.urlsafe_b64decode(token.encode())
+        # Verify signature before trusting any field. Constant-time compare.
+        payload_b64, _, sig = token.partition('.')
+        if not sig or not hmac.compare_digest(sig, _sign(payload_b64)):
+            return None
+        raw = base64.urlsafe_b64decode(payload_b64.encode())
         data = json.loads(raw)
         expires_at = int(data.get('exp') or 0)
         if not expires_at or expires_at < int(time.time()):

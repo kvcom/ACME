@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from acme_app.application.propose_confirm import clear_pending_action, get_pending_action
+from acme_app.application.propose_confirm import clear_pending_action, confirm_payload, get_pending_action
 from acme_app.auth.current_user import CurrentUser, get_current_user
 from acme_app.infrastructure.db import repositories as repo
 from acme_app.infrastructure.db.session import get_db_session
@@ -57,25 +57,20 @@ async def confirm_action(
     if not allowed:
         raise HTTPException(status_code=403, detail=reason)
 
+    # Dispatch the correct MCP tool for this proposal — create_next_action,
+    # update_issue_status, or update_next_action — instead of always creating.
+    tool_name, tool_payload = confirm_payload(pending, {'username': user.username, 'role': role})
     mcp = MCPClient()
     try:
-        result = await mcp.call_tool('create_next_action', {
-            'actor': {'username': user.username, 'role': role},
-            'issue_ref': pending['issue_ref'],
-            'action_type': pending['action_type'],
-            'title': pending.get('title', ''),
-            'description': pending.get('description', ''),
-            'priority': pending.get('priority', 'Medium'),
-            'due_at': pending.get('due_at'),
-            'evidence': pending.get('evidence', []),
-            'idempotency_key': pending['idempotency_key'],
-            'confirmation_token': pending['confirmation_token'],
-        })
+        result = await mcp.call_tool(tool_name, tool_payload)
     except MCPClientError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    if result.get('created') or result.get('duplicate'):
-        action_ref = result.get('action_ref') or result.get('existing_action_ref')
+    if result.get('created') or result.get('duplicate') or result.get('updated'):
+        action_ref = (
+            result.get('action_ref') or result.get('existing_action_ref')
+            or result.get('issue_ref')
+        )
         evidence = list(pending.get('evidence') or [])
         if action_ref:
             evidence.append(f'action:{action_ref}')

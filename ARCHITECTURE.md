@@ -174,7 +174,9 @@ User queries, retrieved customer names, issue descriptions, and tool outputs are
 
 - **Tool argument allowlists** — only registered tools may be called; arguments pass schema validation.
 - **Action catalogue closure** — `action_type` must exist in `action_catalogue`. The LLM cannot invent one.
-- **RBAC server-side** — enforced from the Keycloak token, never from the LLM's plan. A plan that says `role="admin"` does not grant admin rights.
+- **RBAC server-side** — enforced from the verified role envelope, never from the LLM's plan. A plan that says `role="admin"` does not grant admin rights.
+- **Verified identity** — Keycloak JWTs are signature-verified against the realm JWKS (RS256, default on); the demo session cookie is HMAC-signed and tamper-evident, so neither a forged JWT nor an edited cookie can escalate privilege (DECISION_LOG D-004, D-022).
+- **Confirmation tokens bound to their resource** — an HMAC `confirmation_token` carries the action_type and the acted-on issue_ref/action_ref; the MCP write tools verify both, so a token cannot be replayed for a different action (D-007, D-022).
 - **Hardening preamble** in every system prompt; **regex pattern flagging** on incoming queries; **length bound** of 4096 chars.
 
 ## 8. Failure modes
@@ -213,4 +215,4 @@ The safety boundary is unchanged: the agent never invents an action, every recom
 
 ## 13. Append-only data model
 
-The application emits only `INSERT`/`UPDATE`, never `DELETE`. Lifecycle is a column (`status`, `deleted_at`, `is_active`). The audit tables are strictly immutable. Because users are never deleted, every actor column carries both a live `user_id` FK and a historical text snapshot, so the ER graph is fully connected and the audit trail can never be rewritten. GDPR erasure is a `redact_user_pii()` stored function that overwrites PII in place rather than deleting rows.
+The application emits only `INSERT`/`UPDATE`, never `DELETE`. Lifecycle is a column (`status`, `deleted_at`, `is_active`). The audit tables are strictly immutable. Because users are never deleted, every actor column carries both a live `user_id` FK and a historical text snapshot, so the ER graph is fully connected and the audit trail can never be rewritten. GDPR erasure is a `redact_user_pii()` stored function that overwrites PII in place rather than deleting rows — covering `users.email`/`display_name`, `agent_traces.user_query`, and the free text the subject authored (`issue_updates.update_text`, `next_actions.description`).

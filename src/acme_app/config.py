@@ -37,9 +37,39 @@ class Settings(BaseSettings):
     otel_jaeger_query_url: str = 'http://jaeger:16686'
 
     confirmation_hmac_secret: str = 'dev-only-secret-change-me'
+    # Separate secret for signing the session cookie. Defaults to the dev
+    # placeholder; MUST be overridden outside dev (see _guard_secrets()).
+    session_signing_secret: str = 'dev-only-session-secret-change-me'
+    # Verify Keycloak JWT signatures against the realm JWKS for bearer-token
+    # auth. Default on. Set false only for an offline/no-Keycloak demo.
+    jwt_verify_signature: bool = True
     debug_endpoints_enabled: bool = True
     demo_auth_fallback_enabled: bool = True
     demo_session_max_age_seconds: int = 8 * 3600
 
 
+_DEFAULT_SECRETS = {
+    'confirmation_hmac_secret': 'dev-only-secret-change-me',
+    'session_signing_secret': 'dev-only-session-secret-change-me',
+}
+
+
+def _guard_secrets(s: 'Settings') -> None:
+    """Fail loudly if the default placeholder secrets are still in use outside
+    a dev environment. In dev we only warn so the demo runs out of the box."""
+    import logging
+    offenders = [k for k, v in _DEFAULT_SECRETS.items() if getattr(s, k) == v]
+    if not offenders:
+        return
+    msg = (
+        'Default placeholder secret(s) still in use: '
+        + ', '.join(offenders)
+        + '. Override these env vars before any non-dev deployment.'
+    )
+    if s.app_env.lower() not in ('dev', 'development', 'local', 'test'):
+        raise RuntimeError(msg)
+    logging.getLogger(__name__).warning('SECURITY: %s', msg)
+
+
 settings = Settings()
+_guard_secrets(settings)

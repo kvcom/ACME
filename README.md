@@ -30,7 +30,7 @@ Every component the brief mandates (Section 4) is present. This table is the fas
 | 4.7 **Redis** for memory / cache | ✅ | [redis_memory.py](src/acme_app/infrastructure/redis_memory.py) — conversation context, pending actions, lookup + tool-result caches |
 | 4.8 **Evaluation** (5–10 questions: tool selection, grounding, RBAC, action reasonableness) | ✅ (18 cases) | [evaluation/](src/acme_app/evaluation), [EVAL_RESULTS.md](EVAL_RESULTS.md) |
 | 4.8 **Observability** (tool logs, traces, error logs, latency) + bonus OTel/custom viewer | ✅ | `tool_call_logs`, `agent_traces`, `trace_events`; OpenTelemetry → Jaeger/Prometheus; custom Decision Trace Viewer |
-| 4.9 **AI coding tool usage** documented | ✅ | [AI_USAGE.md](AI_USAGE.md), [prompts/](prompts) |
+| 4.9 **AI coding tool usage** documented | ✅ | [AI_USAGE.md](AI_USAGE.md) — tools, end-to-end workflow, cross-check loop, and errors caught |
 
 **Deliverables (Section 5):** (1) this repository; (2) this README — setup, architecture, trade-offs, AI usage; (3) [ARCHITECTURE.md](ARCHITECTURE.md) — system diagram + data flows; (4) [EVAL_RESULTS.md](EVAL_RESULTS.md) — eval output with commentary; (5) [AI_USAGE.md](AI_USAGE.md). No mandated component is missing or mocked; trade-offs on simplified components are in [DECISION_LOG.md](DECISION_LOG.md).
 
@@ -127,7 +127,7 @@ These are local demonstration identities for the technical assessment, not produ
 | `sam.support` | `password` | support_user | Read + propose-confirm writes on most actions |
 | `admin.acme` | `password` | admin | Full read/write under propose-confirm, including cancel |
 
-Production replacement: remove the fallback table, seed users only in the identity provider, enforce Authorization Code with PKCE, verify JWTs against JWKS, use short-lived access tokens with refresh rotation, and keep sessions server-side or in signed secure cookies. See [DECISION_LOG.md](DECISION_LOG.md) D-003 to D-005.
+Already implemented: JWTs are verified against the realm JWKS (RS256, on by default — D-004) and the session cookie is HMAC-signed and tamper-evident (D-022), so a client cannot forge a cookie to escalate to `admin`. Production replacement for what remains: remove the fallback table, seed users only in the identity provider, enforce Authorization Code with PKCE, use short-lived access tokens with refresh rotation, and move sessions to a server-side store. See [DECISION_LOG.md](DECISION_LOG.md) D-003 to D-005 and D-022.
 
 To make the demo path auditable, the app header and `/auth/me` expose the resolved auth source: `auth: keycloak` when a Keycloak token backed the session, or `auth: demo_fallback` only when the local fallback was used. Wrong credentials do not fall back to the demo table. Set `DEMO_AUTH_FALLBACK_ENABLED=false` to disable the fallback entirely and require live Keycloak authentication.
 
@@ -185,10 +185,10 @@ The LLM never writes to the database. For any write:
 
 1. Agent calls `recommend_next_action` (read-only).
 2. `action_guard.can_propose(role, action_type)` runs; if denied, return Permission Denied.
-3. Agent stages a Proposed action in Redis with a 10-minute TTL and a fresh HMAC `confirmation_token`.
+3. Agent stages a Proposed action in Redis with a 10-minute TTL and a fresh HMAC `confirmation_token` bound to the issue/action it acts on.
 4. UI shows the proposed action with Confirm / Cancel.
-5. On Confirm, the API re-validates the token, re-runs RBAC, then calls MCP `create_next_action`.
-6. MCP verifies the token again, checks the idempotency key, and writes.
+5. On Confirm, the API re-validates the token, re-runs RBAC, then dispatches the write tool the proposal targets — `create_next_action`, `update_issue_status`, or `update_next_action` — via the shared `confirm_payload` router (the same router the orchestrator uses, so the two confirm paths can't drift).
+6. MCP verifies the token again (signature, expiry, and resource binding), checks the idempotency key, and writes.
 
 ## Adversarial input handling
 
@@ -220,7 +220,7 @@ See [FAILURE_MODES.md](FAILURE_MODES.md) for the per-dependency matrix. Eval cas
 
 ## AI coding tool usage
 
-See [AI_USAGE.md](AI_USAGE.md) and [prompts/](prompts) for the prompts given to coding agents, what was rewritten and why.
+See [AI_USAGE.md](AI_USAGE.md) for the tools used, the end-to-end workflow, the two-model cross-check loop, and the specific errors I caught and corrected.
 
 ## Decision log
 
