@@ -12,9 +12,9 @@
     "RepoURL": "https://github.com/kvcom/ACME.git",
     "Branch": "master",
     "Commit": "fd018c085036784c42d431bd9c7314486bd03ba5",
-    "CommitMsg": "Harden auth, propose-confirm, and GDPR erasure after self-audit (D-022).\n\nCo-authored-by: Cursor \u003ccursoragent@cursor.com\u003e",
-    "Author": "Konstantin Nikolaev \u003cknikolaev.home@gmail.com\u003e",
-    "Committer": "Konstantin Nikolaev \u003cknikolaev.home@gmail.com\u003e"
+    "CommitMsg": "Harden auth, propose-confirm, and GDPR erasure after self-audit (D-022).\n",
+    "Author": "Konstantin Nikolaev <knikolaev.home@gmail.com>",
+    "Committer": "Konstantin Nikolaev <knikolaev.home@gmail.com>"
   },
   "Results": [
     {
